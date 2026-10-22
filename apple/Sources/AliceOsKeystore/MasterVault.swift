@@ -12,19 +12,61 @@ import Security
 /// did not return on a device in testing. Changing the enrolled biometrics is meant to
 /// make the key unusable (Apple's documented behaviour of `.biometryCurrentSet`); this
 /// has not been tested.
+///
+/// The secret lives in numbered slots (enclave key tag and blob account carry the slot
+/// number). `store` writes a new slot completely before it removes older ones, so a
+/// failure while storing leaves the previous secret readable; `open` reads the highest
+/// slot that has a blob.
 public final class MasterVault {
     static let algorithm = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA256AESGCM
-    let tag: Data
+    let name: String
     let service: String
 
     public init(name: String) {
-        tag = Data("alice-os-keystore.master.\(name)".utf8)
+        self.name = name
         service = "alice-os-keystore.master.\(name)"
     }
 
-    /// Wrap `secret` under a new biometry-bound enclave key (replaces a previous one)
+    func tag(_ slot: UInt32) -> Data {
+        Data("alice-os-keystore.master.\(name).\(slot)".utf8)
+    }
+
+    static func account(_ slot: UInt32) -> String {
+        "master.\(slot)"
+    }
+
+    /// The slot number in a blob account name (`master.<n>`), nil for anything else
+    static func slot(fromAccount account: String) -> UInt32? {
+        guard account.hasPrefix("master.") else { return nil }
+        return UInt32(account.dropFirst("master.".count))
+    }
+
+    /// The slot `open` reads: the highest slot that has a blob
+    static func slotToOpen(_ slotsWithBlob: [UInt32]) -> UInt32? {
+        slotsWithBlob.max()
+    }
+
+    /// The slot `store` writes next (one above every slot seen, blob or orphan key)
+    static func nextSlot(_ seen: [UInt32]) -> UInt32 {
+        (seen.max() ?? 0) + 1
+    }
+
+    /// Wrap `secret` under a new biometry-bound enclave key in a new slot, then remove older slots
     public func store(secret: Data) throws {
-        try destroy()
+        let previous = try slotsWithBlob()
+        let slot = Self.nextSlot(previous)
+        do {
+            try writeSlot(slot, secret: secret)
+        } catch {
+            try? deleteSlot(slot) // a half-written new slot; the previous secret is untouched
+            throw error
+        }
+        for old in previous where old != slot {
+            try deleteSlot(old)
+        }
+    }
+
+    func writeSlot(_ slot: UInt32, secret: Data) throws {
         var error: Unmanaged<CFError>?
         guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .biometryCurrentSet], &error) else {
             throw KeystoreError.unavailable(reason: "access control: \(String(describing: error?.takeRetainedValue()))")
@@ -35,7 +77,7 @@ public final class MasterVault {
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: tag,
+                kSecAttrApplicationTag as String: tag(slot),
                 kSecAttrAccessControl as String: access,
             ],
         ]
@@ -48,7 +90,7 @@ public final class MasterVault {
         let status = SecItemAdd([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: "master",
+            kSecAttrAccount as String: Self.account(slot),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: blob,
         ] as CFDictionary, nil)
@@ -59,6 +101,9 @@ public final class MasterVault {
 
     /// Ask for biometric authentication and return the secret
     public func open(reason: String) async throws -> Data {
+        guard let slot = Self.slotToOpen(try slotsWithBlob()) else {
+            throw KeystoreError.unknownKey(generation: 0)
+        }
         let context = LAContext()
         var laError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &laError) else {
@@ -72,11 +117,15 @@ public final class MasterVault {
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: tag,
+            kSecAttrApplicationTag as String: tag(slot),
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecReturnRef as String: true,
             kSecUseAuthenticationContext as String: context,
         ] as CFDictionary, &out)
+        if status == errSecItemNotFound {
+            // the blob is there but its enclave key is gone (biometric set changed, device reset)
+            throw KeystoreError.irrecoverable(reason: "enclave key of the master secret missing")
+        }
         guard status == errSecSuccess, let found = out else {
             throw KeystoreError.unavailable(reason: osStatusReason("enclave key", status))
         }
@@ -85,7 +134,7 @@ public final class MasterVault {
         let read = SecItemCopyMatching([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: "master",
+            kSecAttrAccount as String: Self.account(slot),
             kSecReturnData as String: true,
         ] as CFDictionary, &blobOut)
         guard read == errSecSuccess, let blob = blobOut as? Data else {
@@ -93,21 +142,46 @@ public final class MasterVault {
         }
         var error: Unmanaged<CFError>?
         guard let secret = SecKeyCreateDecryptedData(key, Self.algorithm, blob as CFData, &error) as Data? else {
-            throw KeystoreError.unavailable(reason: "unwrap failed: \(String(describing: error?.takeRetainedValue()))")
+            let code = osStatus(of: error)
+            if let code, isTransient(code) {
+                throw KeystoreError.unavailable(reason: osStatusReason("unwrap", code))
+            }
+            throw KeystoreError.irrecoverable(reason: "unwrap failed (OSStatus \(code.map(String.init) ?? "unknown"))")
         }
         return secret
     }
 
-    /// Delete the enclave key and the wrapped secret
+    /// Delete every slot (enclave keys and wrapped secrets)
     public func destroy() throws {
+        for slot in try slotsWithBlob() {
+            try deleteSlot(slot)
+        }
+    }
+
+    func deleteSlot(_ slot: UInt32) throws {
         for q in [
-            [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service],
-            [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag],
+            [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: Self.account(slot)],
+            [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag(slot)],
         ] as [[String: Any]] {
             let status = SecItemDelete(q as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw KeystoreError.unavailable(reason: osStatusReason("destroy", status))
+                throw KeystoreError.unavailable(reason: osStatusReason("delete slot \(slot)", status))
             }
         }
+    }
+
+    func slotsWithBlob() throws -> [UInt32] {
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ] as CFDictionary, &out)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let items = out as? [[String: Any]] else {
+            throw KeystoreError.unavailable(reason: osStatusReason("list slots", status))
+        }
+        return items.compactMap { ($0[kSecAttrAccount as String] as? String).flatMap(Self.slot(fromAccount:)) }
     }
 }

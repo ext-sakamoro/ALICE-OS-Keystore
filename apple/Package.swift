@@ -8,5 +8,8 @@ let package = Package(
     name: "AliceOsKeystore",
     platforms: [.iOS(.v17), .macOS(.v14), .visionOS(.v1)],
     products: [.library(name: "AliceOsKeystore", targets: ["AliceOsKeystore"])],
-    targets: [.target(name: "AliceOsKeystore")]
+    targets: [
+        .target(name: "AliceOsKeystore"),
+        .testTarget(name: "AliceOsKeystoreTests", dependencies: ["AliceOsKeystore"]),
+    ]
 )

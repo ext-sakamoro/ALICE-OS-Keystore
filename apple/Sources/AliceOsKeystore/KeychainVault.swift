@@ -29,8 +29,11 @@ public final class KeychainVault: DataKeyStore {
             kSecReturnData as String: true,
         ] as CFDictionary, &out)
         if status == errSecItemNotFound { throw KeystoreError.unknownKey(generation: generation) }
-        guard status == errSecSuccess, let key = out as? Data, key.count == 32 else {
+        guard status == errSecSuccess, let key = out as? Data else {
             throw KeystoreError.unavailable(reason: osStatusReason("read key", status))
+        }
+        guard key.count == 32 else {
+            throw KeystoreError.irrecoverable(reason: "stored key is \(key.count) bytes, expected 32")
         }
         return key
     }

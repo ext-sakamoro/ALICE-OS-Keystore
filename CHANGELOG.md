@@ -11,3 +11,6 @@
 - `apple/` Swift package: `SecureEnclaveVault`, `MasterVault`, `KeychainVault`
 - CI: fmt / clippy (pedantic, both feature sets) / test on Linux, macOS, Windows through `scripts/run_tests.sh` (each test binary has a minimum count) / doc / Apple (`scripts/apple_check.sh`: iOS and iOS Simulator libraries, the generated Swift binding, the Swift package for device and Simulator, and the README's conformance snippet typechecked) / security & hygiene (audit, deny, unused dependencies, stub guard, package integrity, coverage) / fuzz (3 targets) / public text / line endings; `scripts/preflight.sh` generated from the workflows
 - `tools/uniffi-bindgen`: the binding generator as a separate tool crate, so that its build-time dependencies (askama 0.12 -> basic-toml, unmaintained) stay out of the library
+- `VaultError::Irrecoverable` / `ForeignVaultError::Irrecoverable` / Swift `KeystoreError.irrecoverable`: a key that cannot be recovered (wrapping key gone, wrapped blob does not open) is no longer reported as the retryable `Unavailable`
+- `MasterVault` stores the secret in numbered slots and writes the new slot before removing the old one (a failure while storing keeps the previous secret)
+- `apple/Tests`: slot rules and error classification (`swift test`)

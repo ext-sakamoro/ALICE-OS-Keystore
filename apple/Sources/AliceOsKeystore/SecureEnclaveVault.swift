@@ -36,10 +36,15 @@ public final class SecureEnclaveVault: DataKeyStore {
         let privateKey = try enclaveKey(create: false)
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateDecryptedData(privateKey, Self.algorithm, blob as CFData, &error) as Data? else {
-            throw KeystoreError.unavailable(reason: "unwrap failed: \(String(describing: error?.takeRetainedValue()))")
+            let code = osStatus(of: error)
+            if let code, isTransient(code) {
+                throw KeystoreError.unavailable(reason: osStatusReason("unwrap", code))
+            }
+            // the blob does not open under this enclave key: retrying gives the same result
+            throw KeystoreError.irrecoverable(reason: "unwrap failed (OSStatus \(code.map(String.init) ?? "unknown"))")
         }
         guard key.count == 32 else {
-            throw KeystoreError.unavailable(reason: "unwrapped \(key.count) bytes, expected 32")
+            throw KeystoreError.irrecoverable(reason: "unwrapped \(key.count) bytes, expected 32")
         }
         return key
     }
@@ -145,7 +150,12 @@ public final class SecureEnclaveVault: DataKeyStore {
         var out: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &out)
         if status == errSecSuccess, let key = out { return key as! SecKey }
-        guard status == errSecItemNotFound, create else {
+        if status == errSecItemNotFound, !create {
+            // a wrapped key exists (it was read before) but the enclave key is gone (restored
+            // backup, device reset): no retry brings it back
+            throw KeystoreError.irrecoverable(reason: "enclave key missing")
+        }
+        guard status == errSecItemNotFound else {
             throw KeystoreError.unavailable(reason: osStatusReason("enclave key", status))
         }
         var error: Unmanaged<CFError>?

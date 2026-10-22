@@ -2,7 +2,7 @@
 # Apple side of the crate, on macOS:
 #   1. the Rust library builds for iOS and the iOS Simulator with the `uniffi` feature
 #   2. the Swift binding is generated from the compiled library (library mode)
-#   3. the Swift package in apple/ builds for an iOS device and the iOS Simulator
+#   3. the Swift package's tests pass on macOS (swift test) and it builds for an iOS device and the iOS Simulator
 #   4. the README's conformance snippet (the ```swift block after "conforms a vault")
 #      typechecks against the generated binding and apple/'s sources
 # Each step fails the script; a snippet that is not found fails it too (no silent skip).
@@ -24,6 +24,7 @@ grep -q "protocol ForeignKeyVault" "$out/gen/alice_os_keystore.swift"
 cp "$out/gen/alice_os_keystoreFFI.h" "$out/inc/"
 cp "$out/gen/alice_os_keystoreFFI.modulemap" "$out/inc/module.modulemap"
 
+(cd apple && swift test)
 (cd apple && xcodebuild -scheme AliceOsKeystore -destination 'generic/platform=iOS' -quiet build)
 (cd apple && xcodebuild -scheme AliceOsKeystore -destination 'generic/platform=iOS Simulator' -quiet build)
 
