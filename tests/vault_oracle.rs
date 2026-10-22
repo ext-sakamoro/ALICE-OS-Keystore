@@ -1,4 +1,4 @@
-//! Oracle for the KeyVault contract and the in-memory vault.
+//! Oracle for the `KeyVault` contract and the in-memory vault.
 //!
 //! The contract: `current` returns the highest generation and its key; `by_id`
 //! returns exactly the key stored for that generation and `UnknownKey` for any
@@ -58,13 +58,30 @@ fn retire_removes_a_generation() {
 #[test]
 fn a_data_key_does_not_print_its_bytes() {
     let k = DataKey::from_bytes([0xAB; 32]);
-    let shown = format!("{k:?}");
-    assert!(!shown.to_lowercase().contains("ab, ab") && !shown.contains("171"), "{shown}");
+    assert_eq!(format!("{k:?}"), "DataKey(..)");
 }
 
 #[test]
 fn the_trait_is_object_safe_and_shareable() {
     let v: std::sync::Arc<dyn KeyVault> = std::sync::Arc::new(MemoryVault::new());
     let w = v.clone();
-    std::thread::spawn(move || w.current().is_err()).join().unwrap();
+    std::thread::spawn(move || w.current().is_err())
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn errors_say_what_happened() {
+    assert_eq!(
+        VaultError::UnknownKey(3).to_string(),
+        "no data key of generation 3"
+    );
+    assert_eq!(
+        VaultError::Unavailable("locked".into()).to_string(),
+        "key store unavailable: locked"
+    );
+    assert_eq!(
+        VaultError::InvalidKeyLength(16).to_string(),
+        "key store returned 16 bytes, expected 32"
+    );
 }

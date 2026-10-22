@@ -1,9 +1,11 @@
 //! Oracle for the adapter that turns a key store implemented on the other side
-//! of the FFI (Swift / Kotlin) into a KeyVault. The foreign side hands raw
+//! of the FFI (Swift / Kotlin) into a `KeyVault`. The foreign side hands raw
 //! bytes; the adapter must accept exactly 32 and pass errors through by kind.
 #![cfg(feature = "uniffi")]
 
-use alice_os_keystore::ffi::{ForeignKeyVault, ForeignVaultAdapter, ForeignVaultError, GenerationKey};
+use alice_os_keystore::ffi::{
+    ForeignKeyVault, ForeignVaultAdapter, ForeignVaultError, GenerationKey,
+};
 use alice_os_keystore::{KeyVault, VaultError};
 
 struct Fixed {
@@ -14,13 +16,20 @@ struct Fixed {
 impl ForeignKeyVault for Fixed {
     fn current(&self) -> Result<GenerationKey, ForeignVaultError> {
         if self.locked {
-            return Err(ForeignVaultError::Unavailable { reason: "locked".into() });
+            return Err(ForeignVaultError::Unavailable {
+                reason: "locked".into(),
+            });
         }
-        Ok(GenerationKey { generation: 4, key: self.key.clone() })
+        Ok(GenerationKey {
+            generation: 4,
+            key: self.key.clone(),
+        })
     }
     fn by_id(&self, generation: u32) -> Result<Vec<u8>, ForeignVaultError> {
         if self.locked {
-            return Err(ForeignVaultError::Unavailable { reason: "locked".into() });
+            return Err(ForeignVaultError::Unavailable {
+                reason: "locked".into(),
+            });
         }
         if generation == 4 {
             Ok(self.key.clone())
@@ -44,9 +53,18 @@ fn a_32_byte_key_passes_through() {
 
 #[test]
 fn errors_keep_their_kind() {
-    assert_eq!(adapter(vec![9; 32], false).by_id(5).unwrap_err(), VaultError::UnknownKey(5));
-    assert!(matches!(adapter(vec![9; 32], true).current(), Err(VaultError::Unavailable(_))));
-    assert!(matches!(adapter(vec![9; 32], true).by_id(4), Err(VaultError::Unavailable(_))));
+    assert_eq!(
+        adapter(vec![9; 32], false).by_id(5).unwrap_err(),
+        VaultError::UnknownKey(5)
+    );
+    assert!(matches!(
+        adapter(vec![9; 32], true).current(),
+        Err(VaultError::Unavailable(_))
+    ));
+    assert!(matches!(
+        adapter(vec![9; 32], true).by_id(4),
+        Err(VaultError::Unavailable(_))
+    ));
 }
 
 #[test]
@@ -62,4 +80,16 @@ fn a_key_of_the_wrong_length_is_rejected() {
             VaultError::InvalidKeyLength(len)
         );
     }
+}
+
+#[test]
+fn foreign_errors_say_what_happened() {
+    assert_eq!(
+        ForeignVaultError::UnknownKey { generation: 2 }.to_string(),
+        "no data key of generation 2"
+    );
+    assert_eq!(
+        ForeignVaultError::Unavailable { reason: "x".into() }.to_string(),
+        "key store unavailable: x"
+    );
 }
