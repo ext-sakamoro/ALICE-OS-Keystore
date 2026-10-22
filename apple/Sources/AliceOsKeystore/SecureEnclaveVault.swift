@@ -17,7 +17,14 @@ public final class SecureEnclaveVault: DataKeyStore {
     let service: String
 
     /// `name` separates vaults of one app (it becomes the key tag and the Keychain service)
-    public init(name: String) {
+    let backend: KeychainBackend
+
+    public convenience init(name: String) {
+        self.init(name: name, backend: SystemKeychain())
+    }
+
+    init(name: String, backend: KeychainBackend) {
+        self.backend = backend
         tag = Data("alice-os-keystore.se.\(name)".utf8)
         service = "alice-os-keystore.dek.\(name)"
     }
@@ -73,7 +80,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData as String: blob,
         ]
-        let added = SecItemAdd(add as CFDictionary, nil)
+        let added = backend.add(add)
         guard added == errSecSuccess else {
             throw KeystoreError.unavailable(reason: osStatusReason("store wrapped key", added))
         }
@@ -87,7 +94,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: "dek.\(generation)",
         ]
-        let status = SecItemDelete(q as CFDictionary)
+        let status = backend.delete(q)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeystoreError.unavailable(reason: osStatusReason("retire", status))
         }
@@ -101,7 +108,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             ([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service], "wrapped keys"),
             ([kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag], "enclave key"),
         ] as [([String: Any], String)] {
-            let status = SecItemDelete(q as CFDictionary)
+            let status = backend.delete(q)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw KeystoreError.unavailable(reason: osStatusReason("destroy \(what)", status))
             }
@@ -115,8 +122,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        let (status, out) = backend.copyMatching(q)
         if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess, let items = out as? [[String: Any]] else {
             throw KeystoreError.unavailable(reason: osStatusReason("list generations", status))
@@ -131,8 +137,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             kSecAttrAccount as String: "dek.\(generation)",
             kSecReturnData as String: true,
         ]
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        let (status, out) = backend.copyMatching(q)
         if status == errSecItemNotFound { throw KeystoreError.unknownKey(generation: generation) }
         guard status == errSecSuccess, let blob = out as? Data else {
             throw KeystoreError.unavailable(reason: osStatusReason("read wrapped key", status))
@@ -147,8 +152,7 @@ public final class SecureEnclaveVault: DataKeyStore {
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecReturnRef as String: true,
         ]
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        let (status, out) = backend.copyMatching(q)
         if status == errSecSuccess, let key = out { return key as! SecKey }
         if status == errSecItemNotFound, !create {
             // a wrapped key exists (it was read before) but the enclave key is gone (restored
@@ -172,9 +176,6 @@ public final class SecureEnclaveVault: DataKeyStore {
                 kSecAttrAccessControl as String: access,
             ],
         ]
-        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            throw KeystoreError.unavailable(reason: "create enclave key: \(String(describing: error?.takeRetainedValue()))")
-        }
-        return key
+        return try backend.createRandomKey(attributes)
     }
 }

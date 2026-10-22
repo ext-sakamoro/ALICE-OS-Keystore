@@ -22,7 +22,14 @@ public final class MasterVault {
     let name: String
     let service: String
 
-    public init(name: String) {
+    let backend: KeychainBackend
+
+    public convenience init(name: String) {
+        self.init(name: name, backend: SystemKeychain())
+    }
+
+    init(name: String, backend: KeychainBackend) {
+        self.backend = backend
         self.name = name
         service = "alice-os-keystore.master.\(name)"
     }
@@ -97,19 +104,20 @@ public final class MasterVault {
                 kSecAttrAccessControl as String: access,
             ],
         ]
-        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error), let pub = SecKeyCopyPublicKey(key) else {
-            throw KeystoreError.unavailable(reason: "create enclave key: \(String(describing: error?.takeRetainedValue()))")
+        let key = try backend.createRandomKey(attributes)
+        guard let pub = SecKeyCopyPublicKey(key) else {
+            throw KeystoreError.unavailable(reason: "no public key")
         }
         guard let blob = SecKeyCreateEncryptedData(pub, Self.algorithm, secret as CFData, &error) as Data? else {
             throw KeystoreError.unavailable(reason: "wrap failed: \(String(describing: error?.takeRetainedValue()))")
         }
-        let status = SecItemAdd([
+        let status = backend.add([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: Self.account(slot),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: blob,
-        ] as CFDictionary, nil)
+        ])
         guard status == errSecSuccess else {
             throw KeystoreError.unavailable(reason: osStatusReason("store wrapped secret", status))
         }
@@ -130,14 +138,13 @@ public final class MasterVault {
         } catch {
             throw KeystoreError.unavailable(reason: "authentication refused: \(error)")
         }
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
+        let (status, out) = backend.copyMatching([
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: tag(slot),
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecReturnRef as String: true,
             kSecUseAuthenticationContext as String: context,
-        ] as CFDictionary, &out)
+        ])
         if status == errSecItemNotFound {
             // the blob is there but its enclave key is gone (biometric set changed, device reset)
             throw KeystoreError.irrecoverable(reason: "enclave key of the master secret missing")
@@ -146,13 +153,12 @@ public final class MasterVault {
             throw KeystoreError.unavailable(reason: osStatusReason("enclave key", status))
         }
         let key = found as! SecKey
-        var blobOut: CFTypeRef?
-        let read = SecItemCopyMatching([
+        let (read, blobOut) = backend.copyMatching([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: Self.account(slot),
             kSecReturnData as String: true,
-        ] as CFDictionary, &blobOut)
+        ])
         guard read == errSecSuccess, let blob = blobOut as? Data else {
             throw KeystoreError.unavailable(reason: osStatusReason("read wrapped secret", read))
         }
@@ -179,7 +185,7 @@ public final class MasterVault {
             [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: Self.account(slot)],
             [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag(slot)],
         ] as [[String: Any]] {
-            let status = SecItemDelete(q as CFDictionary)
+            let status = backend.delete(q)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw KeystoreError.unavailable(reason: osStatusReason("delete slot \(slot)", status))
             }
@@ -188,13 +194,12 @@ public final class MasterVault {
 
     /// Slots that have an enclave key (including keys whose blob is missing)
     func slotsWithKey() throws -> [UInt32] {
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
+        let (status, out) = backend.copyMatching([
             kSecClass as String: kSecClassKey,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
-        ] as CFDictionary, &out)
+        ])
         if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess, let items = out as? [[String: Any]] else {
             throw KeystoreError.unavailable(reason: osStatusReason("list enclave keys", status))
@@ -203,13 +208,12 @@ public final class MasterVault {
     }
 
     func slotsWithBlob() throws -> [UInt32] {
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
+        let (status, out) = backend.copyMatching([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
-        ] as CFDictionary, &out)
+        ])
         if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess, let items = out as? [[String: Any]] else {
             throw KeystoreError.unavailable(reason: osStatusReason("list slots", status))
