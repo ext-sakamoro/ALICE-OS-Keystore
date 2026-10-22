@@ -55,7 +55,7 @@ jobs:
     name: cargo audit (RustSec CVE scan)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit on the tool's lock
@@ -111,7 +111,7 @@ jobs:
     name: cargo-deny (license + advisories + bans + sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -129,7 +129,7 @@ jobs:
     name: cargo-machete (unused dependencies)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       # false-positive は Cargo.toml の [package.metadata.cargo-machete] ignored で除外
@@ -139,7 +139,7 @@ jobs:
     name: Stub / mock / dbg guard (grep)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # `todo!()` / `unimplemented!()` are the endorsed fail-fast idiom here, so
       # fail-fast idiom として endorse されている → block しない、warn only
@@ -204,7 +204,7 @@ jobs:
     name: Package integrity (publish される .crate が build できるか)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       # publish される .crate に必要な file が全部入っているかを見る
@@ -242,7 +242,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -256,7 +256,7 @@ jobs:
           cargo llvm-cov --lib --summary-only 2>&1 | tee coverage-summary.txt
 
       - name: Upload coverage summary as artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-summary
           path: coverage-summary.txt
