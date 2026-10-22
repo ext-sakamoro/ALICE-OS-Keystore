@@ -39,7 +39,7 @@ Generating the Swift binding (library mode; the generator is a separate tool cra
 
 ```sh
 cargo build --release --features uniffi
-cargo run --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
+cargo run --locked --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
   --library target/release/libalice_os_keystore.dylib --language swift --out-dir generated/
 ```
 
@@ -65,6 +65,8 @@ extension SecureEnclaveVault: ForeignKeyVault {
 ```
 
 ## Gaps
+
+- `tools/uniffi-bindgen` (build-time only) has its own lock; its audit runs as an informational job (its basic-toml advisory is known). The library's `Cargo.lock` also lists basic-toml because uniffi 0.28 records its optional generator dependency; it is not built into the library (cargo-deny, which resolves features, does not report it) and the audit ignores it with an exit condition in `security-audit.yml`
 
 - Desktop key stores (macOS Keychain, Windows DPAPI / CNG, Linux Secret Service)
 - Android Keystore

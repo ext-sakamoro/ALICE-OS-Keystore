@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev e1525210a18e647fc6afa3496f68c5439fd7727d
+# generator rev deba227399543fcef94450ba8a418c37a8f5355b
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -97,8 +97,9 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
-#   - ci.yml:apple:run (no cargo / grep)
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
+#   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, needs network / runner-only)
+#   - security-audit.yml:tools-audit:Run cargo audit on the tool's lock (continue-on-error, no count guard for cargo audit)
 #   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_key_bytes] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_key_bytes] (no cargo / grep)
@@ -257,10 +258,17 @@ if [[ $quick -eq 1 ]]; then
 fi
 
 step "ci.yml / test: Test (default features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=8,desktop_gaps=3 -- cargo test )
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=9,desktop_gaps=3 -- cargo test )
 
 step "ci.yml / test: Test (all features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=8,desktop_gaps=3,foreign_oracle=4 -- cargo test --all-features )
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=9,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features )
+
+step "ci.yml / apple: run"
+if command -v xcodebuild >/dev/null 2>&1; then
+  ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/apple_check.sh )
+else
+  echo 'PREFLIGHT-SKIP: ci.yml / apple: run: xcodebuild not installed (skipped-tool)' >&2
+fi
 
 step "security-audit.yml / audit: Run cargo audit"
 (
@@ -273,8 +281,12 @@ step "security-audit.yml / audit: Run cargo audit"
     --ignore RUSTSEC-2026-0204 \
     --ignore RUSTSEC-2025-0020 \
     --ignore RUSTSEC-2026-0176 \
-    --ignore RUSTSEC-2026-0177
+    --ignore RUSTSEC-2026-0177 \
+    --ignore RUSTSEC-2026-0374
 )
+
+step "security-audit.yml / tools-audit: Run cargo audit on the tool's lock"
+echo 'PREFLIGHT-SKIP: security-audit.yml / tools-audit: Run cargo audit on the tool'"'"'s lock: continue-on-error, no count guard for cargo audit' >&2
 
 step "security-audit.yml / coverage: Run coverage"
 (

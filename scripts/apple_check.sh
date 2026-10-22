@@ -18,7 +18,7 @@ for target in aarch64-apple-ios aarch64-apple-ios-sim; do
 done
 
 cargo build --release --features uniffi --lib
-cargo run --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
+cargo run --locked --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
   --library target/release/libalice_os_keystore.dylib --language swift --out-dir "$out/gen"
 grep -q "protocol ForeignKeyVault" "$out/gen/alice_os_keystore.swift"
 cp "$out/gen/alice_os_keystoreFFI.h" "$out/inc/"
