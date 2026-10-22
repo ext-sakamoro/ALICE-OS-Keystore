@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev deba227399543fcef94450ba8a418c37a8f5355b
+# generator rev d8e28ae2dcf08c36be130cbb16ec28e4c40619f1
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -103,13 +103,13 @@ has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 #   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_key_bytes] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_key_bytes] (no cargo / grep)
-#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (runner-only (open-ended or unprovable-bounded fuzz run))
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_memory_vault_ops] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_memory_vault_ops] (no cargo / grep)
-#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_memory_vault_ops] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_memory_vault_ops] (runner-only (open-ended or unprovable-bounded fuzz run))
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_errors] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_errors] (no cargo / grep)
-#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_errors] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_errors] (runner-only (open-ended or unprovable-bounded fuzz run))
 
 need cargo-audit "cargo install cargo-audit --locked"
 need cargo-deny "cargo install cargo-deny --locked"
@@ -311,7 +311,7 @@ step "security-audit.yml / coverage: Run coverage"
     )
   } 2>&1 | tee "${log}"
   rc=${PIPESTATUS[0]}
-  n=$(sed $'s/\033\[[0-9;]*m//g' "${log}" | awk '$1 == "TOTAL" && $2 ~ /^[0-9]+$/ {n = $2} END {print n + 0}')
+  n=$(sed $'s/\033\[[0-9;]*m//g' "${log}" | awk '$1 == "TOTAL" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {n = $2 - $3} END {print n + 0}')
   rm -f "${log}"
   set -e
   if [ -z "${n}" ] || [ "${n}" -eq 0 ]; then echo 'security-audit.yml / coverage: Run coverage: cargo-llvm-cov compared nothing (continue-on-error in CI; a run with no count fails)' >&2; exit 1; fi

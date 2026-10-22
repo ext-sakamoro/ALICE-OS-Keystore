@@ -1,5 +1,9 @@
 name: Security & Hygiene
 
+# dtolnay/rust-toolchain is referenced by channel (@stable / @nightly), not by commit SHA:
+# rust-toolchain.toml (1.98.1) selects the compiler cargo uses here, and the fuzz jobs call
+# `cargo +nightly` explicitly; pinning the action itself is left to the shared template
+
 # Shared ALICE-* security layout: audit / deny / unused deps / stub guard /
 # package integrity / coverage. semver-checks is absent while the crate is
 # unpublished: there is no released version to compare with (it is added with the
@@ -55,9 +59,9 @@ jobs:
     name: cargo audit (RustSec CVE scan)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -101,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit on the tool's lock
@@ -111,9 +115,9 @@ jobs:
     name: cargo-deny (license + advisories + bans + sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # EmbarkStudios/cargo-deny-action@v2 は Docker container 内で稼働し、
       # /github/workspace のみ mount するため sibling path dep が見えず fail する
@@ -129,17 +133,17 @@ jobs:
     name: cargo-machete (unused dependencies)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
 
       # false-positive は Cargo.toml の [package.metadata.cargo-machete] ignored で除外
-      - uses: bnjbvr/cargo-machete@main
+      - uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2
 
   stub-guard:
     name: Stub / mock / dbg guard (grep)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `todo!()` / `unimplemented!()` are the endorsed fail-fast idiom here, so
       # fail-fast idiom として endorse されている → block しない、warn only
@@ -204,7 +208,7 @@ jobs:
     name: Package integrity (publish される .crate が build できるか)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
 
       # publish される .crate に必要な file が全部入っているかを見る
@@ -242,14 +246,16 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-llvm-cov
 
       # the tests live in tests/, so the run must include them (--lib measured 0 of 117 regions);
       # a summary without TOTAL, or with line coverage under the floor, fails the step; the floor
@@ -261,7 +267,7 @@ jobs:
             | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 < 85) { print "line coverage below the 85% floor: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
 
       - name: Upload coverage summary as artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-summary
           path: coverage-summary.txt

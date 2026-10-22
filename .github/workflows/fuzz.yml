@@ -1,5 +1,9 @@
 name: Fuzz
 
+# dtolnay/rust-toolchain is referenced by channel (@stable / @nightly), not by commit SHA:
+# rust-toolchain.toml (1.98.1) selects the compiler cargo uses here, and the fuzz jobs call
+# `cargo +nightly` explicitly; pinning the action itself is left to the shared template
+
 # Shared ALICE-* fuzz layout: build every target on nightly, then replay the
 # corpus time-boxed. The build is the hard gate; the replay is informational
 # because a timeout is not a crash.
@@ -60,13 +64,13 @@ jobs:
           - fuzz_memory_vault_ops
           - fuzz_foreign_errors
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # cargo-fuzz は nightly toolchain 必須
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: fuzz
 
@@ -125,7 +129,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
