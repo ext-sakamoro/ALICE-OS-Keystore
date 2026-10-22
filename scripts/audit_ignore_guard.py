@@ -13,7 +13,9 @@ the ignore cannot outlive it:
     longer applies: remove it from the audit step).
 
 It fails when it could not compare anything (no Cargo.lock, or cargo tree did
-not run), so it never passes vacuously.
+not run), so it never passes vacuously. cargo tree runs with --locked: a
+Cargo.toml that no longer matches the lock fails instead of being re-resolved
+(which would check another resolution and rewrite the committed lock).
 
     python3 scripts/audit_ignore_guard.py basic-toml [--dir .]
 """
@@ -35,7 +37,7 @@ def check(crate, root):
     if crate not in names:
         return 1, f"audit_ignore_guard: {crate} is no longer in Cargo.lock: the ignore is stale, remove it"
     tree = subprocess.run(
-        ["cargo", "tree", "-i", crate, "--all-features", "-e", "all", "--target", "all"],
+        ["cargo", "tree", "--locked", "-i", crate, "--all-features", "-e", "all", "--target", "all"],
         cwd=root, capture_output=True, text=True,
     )
     if tree.returncode != 0:

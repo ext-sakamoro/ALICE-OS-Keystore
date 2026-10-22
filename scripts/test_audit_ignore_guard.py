@@ -7,6 +7,7 @@
   - reachable only on iOS (target-specific)        -> 1 (`--target all` sees it)
   - reachable only behind a feature                -> 1 (`--all-features` sees it)
   - cargo tree fails (manifest broken after lock)  -> 2 (nothing compared, never "valid")
+  - Cargo.toml no longer matches the lock          -> 2 (no re-resolution; the lock is left as it is)
   - a Cargo.lock with no packages                  -> 2 (nothing compared)
   - no Cargo.lock                                  -> 2 (nothing compared)
 """
@@ -62,6 +63,19 @@ def main():
         if rc != 2 or "cargo tree failed" not in msg:
             failures.append(f"cargo tree fails: rc {rc} (want 2): {msg}")
 
+        # a lock that no longer matches Cargo.toml: the guard must not re-resolve (and so
+        # must not rewrite the committed lock); it cannot compare and says so
+        stale = crate(tmp, "stale-lock", 'uniffi = "=0.28.3"')
+        manifest = (stale / "Cargo.toml").read_text(encoding="utf-8")
+        (stale / "Cargo.toml").write_text(
+            manifest.replace('uniffi = "=0.28.3"', 'uniffi = "=0.28.3"\nzeroize = "1"'), encoding="utf-8")
+        before = (stale / "Cargo.lock").read_bytes()
+        rc, msg = guard.check("basic-toml", stale)
+        if rc != 2 or "cargo tree failed" not in msg:
+            failures.append(f"stale lock: rc {rc} (want 2): {msg}")
+        if (stale / "Cargo.lock").read_bytes() != before:
+            failures.append("stale lock: the guard rewrote Cargo.lock")
+
         # a Cargo.lock that lists no packages compares nothing
         bare = pathlib.Path(tmp) / "bare"
         bare.mkdir()
@@ -77,7 +91,7 @@ def main():
     if failures:
         print("test_audit_ignore_guard FAIL:", *failures, sep="\n  ")
         return 1
-    print("test_audit_ignore_guard OK (8 cases)")
+    print("test_audit_ignore_guard OK (9 cases)")
     return 0
 
 
