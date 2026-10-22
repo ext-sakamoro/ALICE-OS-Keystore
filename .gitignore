@@ -8,3 +8,4 @@ fuzz/artifacts
 fuzz/coverage
 tools/uniffi-bindgen/target
 __pycache__/
+coverage-summary.txt

@@ -303,7 +303,12 @@ step "security-audit.yml / coverage: Run coverage"
   log="$(mktemp)"
   set +e
   {
-    ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo llvm-cov --lib --summary-only 2>&1 )
+    (
+      export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+      set -o pipefail
+      cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
+        | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 == 0) { print "coverage measured nothing: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
+    )
   } 2>&1 | tee "${log}"
   rc=${PIPESTATUS[0]}
   n=$(sed $'s/\033\[[0-9;]*m//g' "${log}" | awk '$1 == "TOTAL" && $2 ~ /^[0-9]+$/ {n = $2} END {print n + 0}')

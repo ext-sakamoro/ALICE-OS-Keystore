@@ -251,9 +251,13 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # the tests live in tests/, so the run must include them (--lib measured 0 of 117 regions);
+      # a summary whose TOTAL covers no lines measured nothing and fails the step
       - name: Run coverage
         run: |
-          cargo llvm-cov --lib --summary-only 2>&1 | tee coverage-summary.txt
+          set -o pipefail
+          cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
+            | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 == 0) { print "coverage measured nothing: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
 
       - name: Upload coverage summary as artifact
         uses: actions/upload-artifact@v6
