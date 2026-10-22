@@ -4,6 +4,9 @@
   - lock-only (uniffi 0.28 without its generator)  -> 0 (ignore valid)
   - reachable (uniffi 0.28 with `cli`)             -> 1 (built: the ignore would hide it)
   - stale (no uniffi at all)                       -> 1 (not in the lock: remove the ignore)
+  - reachable only on iOS (target-specific)        -> 1 (`--target all` sees it)
+  - cargo tree fails (manifest broken after lock)  -> 2 (nothing compared, never "valid")
+  - a Cargo.lock with no packages                  -> 2 (nothing compared)
   - no Cargo.lock                                  -> 2 (nothing compared)
 """
 
@@ -17,13 +20,13 @@ sys.path.insert(0, str(HERE))
 import audit_ignore_guard as guard  # noqa: E402
 
 
-def crate(tmp, name, deps):
+def crate(tmp, name, deps, table="[dependencies]"):
     d = pathlib.Path(tmp) / name
     (d / "src").mkdir(parents=True)
     (d / "src/lib.rs").write_text("", encoding="utf-8")
     (d / "Cargo.toml").write_text(
         f'[package]\nname = "{name}"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n'
-        f"[dependencies]\n{deps}\n\n[workspace]\n", encoding="utf-8")
+        f"{table}\n{deps}\n\n[workspace]\n", encoding="utf-8")
     subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=d, check=True, capture_output=True)
     return d
 
@@ -31,24 +34,42 @@ def crate(tmp, name, deps):
 def main():
     failures = []
     with tempfile.TemporaryDirectory() as tmp:
+        cli = 'uniffi = { version = "=0.28.3", features = ["cli"] }'
         cases = [
-            ("lock-only", 'uniffi = "=0.28.3"', 0),
-            ("reachable", 'uniffi = { version = "=0.28.3", features = ["cli"] }', 1),
-            ("stale", 'zeroize = "1"', 1),
+            # (name, deps, table, want rc, a word the message must contain)
+            ("lock-only", 'uniffi = "=0.28.3"', "[dependencies]", 0, "still valid"),
+            ("reachable", cli, "[dependencies]", 1, "reachable"),
+            ("reachable on ios only", cli, "[target.'cfg(target_os = \"ios\")'.dependencies]", 1, "reachable"),
+            ("stale", 'zeroize = "1"', "[dependencies]", 1, "stale"),
         ]
-        for name, deps, want in cases:
-            rc, msg = guard.check("basic-toml", crate(tmp, name, deps))
-            if rc != want:
-                failures.append(f"{name}: rc {rc} (want {want}): {msg}")
+        for name, deps, table, want, word in cases:
+            rc, msg = guard.check("basic-toml", crate(tmp, name.replace(" ", "-"), deps, table))
+            if rc != want or word not in msg:
+                failures.append(f"{name}: rc {rc} (want {want}, message with {word!r}): {msg}")
+
+        # cargo tree cannot run (the manifest is broken after the lock was made): never "valid"
+        broken = crate(tmp, "broken", 'uniffi = "=0.28.3"')
+        (broken / "Cargo.toml").write_text("[package\n", encoding="utf-8")
+        rc, msg = guard.check("basic-toml", broken)
+        if rc != 2 or "cargo tree failed" not in msg:
+            failures.append(f"cargo tree fails: rc {rc} (want 2): {msg}")
+
+        # a Cargo.lock that lists no packages compares nothing
+        bare = pathlib.Path(tmp) / "bare"
+        bare.mkdir()
+        (bare / "Cargo.lock").write_text("version = 3\n", encoding="utf-8")
+        rc, msg = guard.check("basic-toml", bare)
+        if rc != 2 or "no packages" not in msg:
+            failures.append(f"empty lock: rc {rc} (want 2): {msg}")
         empty = pathlib.Path(tmp) / "empty"
         empty.mkdir()
         rc, msg = guard.check("basic-toml", empty)
-        if rc != 2:
+        if rc != 2 or "not found" not in msg:
             failures.append(f"no lock: rc {rc} (want 2): {msg}")
     if failures:
         print("test_audit_ignore_guard FAIL:", *failures, sep="\n  ")
         return 1
-    print("test_audit_ignore_guard OK (4 cases)")
+    print("test_audit_ignore_guard OK (7 cases)")
     return 0
 
 
