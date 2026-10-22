@@ -72,6 +72,8 @@ final class InMemoryKeychain: KeychainBackend {
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecValueRef as String: key,
         ]
+        // a stand-in, stricter than the real Keychain (which accepts two keys with the same tag):
+        // it makes a reused slot number visible in tests
         if items.contains(where: { matches($0, item) }) {
             throw KeystoreError.unavailable(reason: "duplicate key tag \(String(data: tag, encoding: .utf8) ?? "?")")
         }

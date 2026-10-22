@@ -15,3 +15,4 @@
 - `MasterVault` stores the secret in numbered slots and writes the new slot before removing the old one (a failure while storing keeps the previous secret)
 - `apple/Tests`: slot rules and error classification (`swift test`)
 - `scripts/audit_ignore_guard.py` (security-audit の audit job): RUSTSEC-2026-0374 の ignore は basic-toml が Cargo.lock にあり、どの feature でも build されない間だけ有効 build される (reachable) か lock から消えた (stale) ら fail、比較できない時も fail 試験は cargo の cache だけで作る小さな crate 4 通り
+- Apple: every Keychain call goes through `SystemKeychain` with `kSecUseDataProtectionKeychain` (on macOS this needs a signed, entitled app; `KeychainVault` items move from the file-based keychain to the data-protection keychain there); the three vaults are tested through an in-memory keychain with injected faults, and the dictionaries reaching the Security functions are recorded in a test

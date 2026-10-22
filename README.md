@@ -34,6 +34,7 @@ With the `uniffi` feature the crate exports a callback interface `ForeignKeyVaul
 - `SecureEnclaveVault`: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so keys open while the device is locked after the first unlock (background work), and never leave the device.
 - `MasterVault`: `.biometryCurrentSet`; opening calls `LAContext.evaluatePolicy` first and then uses that context for the key. The secret lives in numbered slots: storing writes a new slot completely before removing the old one, so a failure while storing keeps the previous secret readable. Invalidation on a change of enrolled biometrics is Apple's documented behaviour and has not been tested here.
 - Keychain items outlive an iOS app: call `destroy()` before removing test builds.
+- Every Keychain call uses the data-protection keychain (`kSecUseDataProtectionKeychain`). On iOS / iPadOS / visionOS that is the only keychain. On macOS it is required for Secure Enclave keys, and it needs a signed app with a keychain access group: an unsigned macOS build gets `errSecMissingEntitlement` (-34018). `KeychainVault` items on macOS are therefore in the data-protection keychain too, not in the file-based login keychain (a change from earlier builds of this crate).
 
 Generating the Swift binding (library mode; the generator is a separate tool crate so that its build-time dependencies stay out of the library):
 

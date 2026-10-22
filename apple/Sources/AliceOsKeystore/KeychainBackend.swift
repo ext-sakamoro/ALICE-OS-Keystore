@@ -19,7 +19,18 @@ protocol KeychainBackend {
 /// the default is the file-based keychain, while Secure Enclave keys live in the
 /// data-protection keychain, so lookups without the flag would miss them (on iOS and
 /// visionOS the data-protection keychain is the only one and the flag changes nothing).
+/// The Security framework functions SystemKeychain calls, replaceable so a test can record
+/// exactly what reaches the Security layer
+struct SecurityFunctions {
+    var copyMatching: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemCopyMatching
+    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemAdd
+    var delete: (CFDictionary) -> OSStatus = SecItemDelete
+    var createRandomKey: (CFDictionary, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> SecKey? = SecKeyCreateRandomKey
+}
+
 struct SystemKeychain: KeychainBackend {
+    var security = SecurityFunctions()
+
     static func prepared(_ dictionary: [String: Any]) -> [String: Any] {
         var d = dictionary
         d[kSecUseDataProtectionKeychain as String] = true
@@ -28,21 +39,21 @@ struct SystemKeychain: KeychainBackend {
 
     func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
         var out: CFTypeRef?
-        let status = SecItemCopyMatching(Self.prepared(query) as CFDictionary, &out)
+        let status = security.copyMatching(Self.prepared(query) as CFDictionary, &out)
         return (status, out)
     }
 
     func add(_ attributes: [String: Any]) -> OSStatus {
-        SecItemAdd(Self.prepared(attributes) as CFDictionary, nil)
+        security.add(Self.prepared(attributes) as CFDictionary, nil)
     }
 
     func delete(_ query: [String: Any]) -> OSStatus {
-        SecItemDelete(Self.prepared(query) as CFDictionary)
+        security.delete(Self.prepared(query) as CFDictionary)
     }
 
     func createRandomKey(_ attributes: [String: Any]) throws -> SecKey {
         var error: Unmanaged<CFError>?
-        guard let key = SecKeyCreateRandomKey(Self.prepared(attributes) as CFDictionary, &error) else {
+        guard let key = security.createRandomKey(Self.prepared(attributes) as CFDictionary, &error) else {
             throw KeystoreError.unavailable(reason: "create enclave key: \(String(describing: error?.takeRetainedValue()))")
         }
         return key
