@@ -93,3 +93,35 @@ fn foreign_errors_say_what_happened() {
         "key store unavailable: x"
     );
 }
+
+struct Broken;
+
+impl ForeignKeyVault for Broken {
+    fn current(&self) -> Result<GenerationKey, ForeignVaultError> {
+        Err(ForeignVaultError::Irrecoverable {
+            reason: "blob does not open".into(),
+        })
+    }
+    fn by_id(&self, _generation: u32) -> Result<Vec<u8>, ForeignVaultError> {
+        Err(ForeignVaultError::Irrecoverable {
+            reason: "blob does not open".into(),
+        })
+    }
+}
+
+#[test]
+fn an_irrecoverable_foreign_error_stays_irrecoverable() {
+    let a = ForeignVaultAdapter::new(Box::new(Broken));
+    assert_eq!(
+        a.current().unwrap_err(),
+        VaultError::Irrecoverable("blob does not open".into())
+    );
+    assert_eq!(
+        a.by_id(1).unwrap_err(),
+        VaultError::Irrecoverable("blob does not open".into())
+    );
+    assert_eq!(
+        ForeignVaultError::Irrecoverable { reason: "x".into() }.to_string(),
+        "key store cannot recover this key: x"
+    );
+}

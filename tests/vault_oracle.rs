@@ -85,3 +85,14 @@ fn errors_say_what_happened() {
         "key store returned 16 bytes, expected 32"
     );
 }
+
+#[test]
+fn an_irrecoverable_failure_is_its_own_kind() {
+    // a key that is gone or a wrapped blob that no longer opens will not succeed on retry
+    let e = VaultError::Irrecoverable("enclave key missing".into());
+    assert_ne!(e, VaultError::Unavailable("enclave key missing".into()));
+    assert_eq!(
+        e.to_string(),
+        "key store cannot recover this key: enclave key missing"
+    );
+}
