@@ -27,8 +27,16 @@ public final class MasterVault {
         service = "alice-os-keystore.master.\(name)"
     }
 
+    var tagPrefix: String { "alice-os-keystore.master.\(name)." }
+
     func tag(_ slot: UInt32) -> Data {
-        Data("alice-os-keystore.master.\(name).\(slot)".utf8)
+        Data("\(tagPrefix)\(slot)".utf8)
+    }
+
+    /// The slot number in an enclave key tag of this vault, nil for any other tag
+    static func slot(fromTag tag: Data, prefix: String) -> UInt32? {
+        guard let text = String(data: tag, encoding: .utf8), text.hasPrefix(prefix) else { return nil }
+        return UInt32(text.dropFirst(prefix.count))
     }
 
     static func account(_ slot: UInt32) -> String {
@@ -46,19 +54,27 @@ public final class MasterVault {
         slotsWithBlob.max()
     }
 
-    /// The slot `store` writes next (one above every slot seen, blob or orphan key)
-    static func nextSlot(_ seen: [UInt32]) -> UInt32 {
-        (seen.max() ?? 0) + 1
+    /// The slot `store` writes next: one above every slot seen, whether it has a blob or
+    /// only an enclave key left behind by a failed store (reusing that number would create
+    /// a second key with the same tag)
+    static func nextSlot(blobSlots: [UInt32], keySlots: [UInt32]) -> UInt32 {
+        ((blobSlots + keySlots).max() ?? 0) + 1
     }
 
     /// Wrap `secret` under a new biometry-bound enclave key in a new slot, then remove older slots
     public func store(secret: Data) throws {
         let previous = try slotsWithBlob()
-        let slot = Self.nextSlot(previous)
+        let slot = Self.nextSlot(blobSlots: previous, keySlots: try slotsWithKey())
         do {
             try writeSlot(slot, secret: secret)
         } catch {
-            try? deleteSlot(slot) // a half-written new slot; the previous secret is untouched
+            // remove the half-written new slot; the previous secret is untouched either way,
+            // but a cleanup failure is reported, not dropped
+            do {
+                try deleteSlot(slot)
+            } catch let cleanup {
+                throw KeystoreError.unavailable(reason: "store failed: \(error); removing the partial slot \(slot) failed: \(cleanup)")
+            }
             throw error
         }
         for old in previous where old != slot {
@@ -151,9 +167,9 @@ public final class MasterVault {
         return secret
     }
 
-    /// Delete every slot (enclave keys and wrapped secrets)
+    /// Delete every slot (enclave keys and wrapped secrets, including orphan keys)
     public func destroy() throws {
-        for slot in try slotsWithBlob() {
+        for slot in Set(try slotsWithBlob() + slotsWithKey()) {
             try deleteSlot(slot)
         }
     }
@@ -168,6 +184,22 @@ public final class MasterVault {
                 throw KeystoreError.unavailable(reason: osStatusReason("delete slot \(slot)", status))
             }
         }
+    }
+
+    /// Slots that have an enclave key (including keys whose blob is missing)
+    func slotsWithKey() throws -> [UInt32] {
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass as String: kSecClassKey,
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ] as CFDictionary, &out)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let items = out as? [[String: Any]] else {
+            throw KeystoreError.unavailable(reason: osStatusReason("list enclave keys", status))
+        }
+        return items.compactMap { ($0[kSecAttrApplicationTag as String] as? Data).flatMap { Self.slot(fromTag: $0, prefix: tagPrefix) } }
     }
 
     func slotsWithBlob() throws -> [UInt32] {
