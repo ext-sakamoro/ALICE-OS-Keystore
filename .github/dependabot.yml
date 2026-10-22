@@ -5,12 +5,21 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # minor and patch together; a major update comes as its own pull request
       cargo:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # uniffi is pinned (=0.28.3) together with the generated Swift binding and the
+      # binding generator in tools/uniffi-bindgen; 0.28 -> 0.29 changes the binding, so
+      # it is moved by hand with both, never by an automatic update
+      - dependency-name: uniffi
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     groups:
+      # actions are pinned by commit SHA, so a major update is grouped too
       actions:
         patterns: ["*"]
