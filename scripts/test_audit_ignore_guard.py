@@ -5,6 +5,7 @@
   - reachable (uniffi 0.28 with `cli`)             -> 1 (built: the ignore would hide it)
   - stale (no uniffi at all)                       -> 1 (not in the lock: remove the ignore)
   - reachable only on iOS (target-specific)        -> 1 (`--target all` sees it)
+  - reachable only behind a feature                -> 1 (`--all-features` sees it)
   - cargo tree fails (manifest broken after lock)  -> 2 (nothing compared, never "valid")
   - a Cargo.lock with no packages                  -> 2 (nothing compared)
   - no Cargo.lock                                  -> 2 (nothing compared)
@@ -20,13 +21,13 @@ sys.path.insert(0, str(HERE))
 import audit_ignore_guard as guard  # noqa: E402
 
 
-def crate(tmp, name, deps, table="[dependencies]"):
+def crate(tmp, name, deps, table="[dependencies]", extra=""):
     d = pathlib.Path(tmp) / name
     (d / "src").mkdir(parents=True)
     (d / "src/lib.rs").write_text("", encoding="utf-8")
     (d / "Cargo.toml").write_text(
         f'[package]\nname = "{name}"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n'
-        f"{table}\n{deps}\n\n[workspace]\n", encoding="utf-8")
+        f"{table}\n{deps}\n\n{extra}[workspace]\n", encoding="utf-8")
     subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=d, check=True, capture_output=True)
     return d
 
@@ -46,6 +47,13 @@ def main():
             rc, msg = guard.check("basic-toml", crate(tmp, name.replace(" ", "-"), deps, table))
             if rc != want or word not in msg:
                 failures.append(f"{name}: rc {rc} (want {want}, message with {word!r}): {msg}")
+
+        # reachable only when a feature is on: the guard resolves all features
+        gated = crate(tmp, "feature-gated", 'uniffi = { version = "=0.28.3", optional = true }',
+                      extra='[features]\ngen = ["dep:uniffi", "uniffi/cli"]\n\n')
+        rc, msg = guard.check("basic-toml", gated)
+        if rc != 1 or "reachable" not in msg:
+            failures.append(f"reachable behind a feature: rc {rc} (want 1): {msg}")
 
         # cargo tree cannot run (the manifest is broken after the lock was made): never "valid"
         broken = crate(tmp, "broken", 'uniffi = "=0.28.3"')
@@ -69,7 +77,7 @@ def main():
     if failures:
         print("test_audit_ignore_guard FAIL:", *failures, sep="\n  ")
         return 1
-    print("test_audit_ignore_guard OK (7 cases)")
+    print("test_audit_ignore_guard OK (8 cases)")
     return 0
 
 

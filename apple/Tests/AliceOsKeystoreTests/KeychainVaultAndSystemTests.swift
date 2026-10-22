@@ -71,3 +71,25 @@ final class KeychainVaultAndSystemTests: XCTestCase {
         }
     }
 }
+
+/// The default SecurityFunctions are the real Security calls: on an unmodified SystemKeychain,
+/// looking up or deleting an item that was never stored does not report success (it reports
+/// errSecItemNotFound, or errSecMissingEntitlement on an unsigned macOS test host). A no-op
+/// stand-in would report success. `add` is checked with a dictionary that has no item class,
+/// which the real call rejects (errSecParam, or the missing-entitlement status) whatever the
+/// environment, so the test never stores an item.
+final class SystemKeychainDefaultsTests: XCTestCase {
+    func testLookupAndDeleteOfAMissingItemDoNotSucceed() {
+        let system = SystemKeychain()
+        let service = "alice-os-keystore.test.\(UUID().uuidString)"
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+        let (lookup, _) = system.copyMatching(query)
+        XCTAssertNotEqual(lookup, errSecSuccess)
+        XCTAssertNotEqual(system.delete(query), errSecSuccess)
+    }
+
+    func testAddWithoutAnItemClassIsRejected() {
+        let status = SystemKeychain().add([kSecAttrService as String: "alice-os-keystore.test.\(UUID().uuidString)"])
+        XCTAssertNotEqual(status, errSecSuccess)
+    }
+}
