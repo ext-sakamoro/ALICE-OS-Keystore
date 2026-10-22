@@ -67,9 +67,7 @@ impl ForeignVaultAdapter {
 
 fn to_key(mut bytes: Vec<u8>) -> Result<DataKey, VaultError> {
     use zeroize::Zeroize;
-    let out = <[u8; 32]>::try_from(bytes.as_slice())
-        .map(DataKey::from_bytes)
-        .map_err(|_| VaultError::InvalidKeyLength(bytes.len()));
+    let out = DataKey::from_slice(&bytes);
     bytes.zeroize();
     out
 }

@@ -268,10 +268,10 @@ if [[ $quick -eq 1 ]]; then
 fi
 
 step "ci.yml / test: Test (default features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=9,desktop_gaps=3 -- cargo test )
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=10,desktop_gaps=3 -- cargo test )
 
 step "ci.yml / test: Test (all features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=9,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features )
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features )
 
 step "ci.yml / apple: run"
 if command -v xcodebuild >/dev/null 2>&1; then

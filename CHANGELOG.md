@@ -6,6 +6,7 @@
 
 - `KeyVault` (data keys by generation), `DataKey` (zeroed on drop, not printed), `VaultError` (`UnknownKey` / `Unavailable` / `InvalidKeyLength`)
 - `MemoryVault`: keys in memory only, for tests and ephemeral data
+- `DataKey::from_slice`: copies a 32-byte slice straight into the key (other lengths are `VaultError::InvalidKeyLength` with the length), so callers holding the key in a buffer need no array of their own; the `uniffi` adapter and `MemoryVault::generate` now write into the key directly
 - `uniffi` feature: `ffi::ForeignKeyVault` callback interface and `ffi::ForeignVaultAdapter` (accepts only 32-byte keys, keeps the error kind)
 - `desktop::{MacosKeychainVault, WindowsDpapiVault, LinuxSecretServiceVault}`: not implemented, every call fails fast
 - `apple/` Swift package: `SecureEnclaveVault`, `MasterVault`, `KeychainVault`

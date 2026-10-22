@@ -53,6 +53,23 @@ impl DataKey {
         Self(bytes)
     }
 
+    /// Copy a key from a slice straight into the key's own storage (zeroed on drop),
+    /// so the caller needs no `[u8; 32]` temporary of its own
+    ///
+    /// Moving the returned value may still leave a copy the compiler made; this avoids
+    /// only the named intermediate array.
+    ///
+    /// # Errors
+    /// [`VaultError::InvalidKeyLength`] with the slice length when it is not 32 bytes
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, VaultError> {
+        if bytes.len() != 32 {
+            return Err(VaultError::InvalidKeyLength(bytes.len()));
+        }
+        let mut key = Self([0u8; 32]);
+        key.0.copy_from_slice(bytes);
+        Ok(key)
+    }
+
     /// The key bytes (copy them only into memory that is zeroed afterwards)
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {
@@ -151,11 +168,10 @@ impl MemoryVault {
     /// [`VaultError::Unavailable`] when the operating system's entropy source fails,
     /// or when the generation counter would overflow
     pub fn generate(&self) -> Result<u32, VaultError> {
-        let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes)
+        // fill the key's own storage, so no other copy of the fresh bytes exists
+        let mut key = DataKey([0u8; 32]);
+        getrandom::getrandom(&mut key.0)
             .map_err(|e| VaultError::Unavailable(format!("entropy: {e}")))?;
-        let key = DataKey::from_bytes(bytes);
-        bytes.zeroize();
         let mut keys = self.lock();
         let next = match keys.keys().next_back() {
             None => 1,

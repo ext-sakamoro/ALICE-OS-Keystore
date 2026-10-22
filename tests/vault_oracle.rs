@@ -96,3 +96,18 @@ fn an_irrecoverable_failure_is_its_own_kind() {
         "key store cannot recover this key: enclave key missing"
     );
 }
+
+#[test]
+fn from_slice_takes_exactly_32_bytes() {
+    // oracle: the length rule of the type (a data key is 32 bytes), not the implementation
+    let bytes: Vec<u8> = (0u8..32).collect();
+    let k = DataKey::from_slice(&bytes).expect("32 bytes is a key");
+    assert_eq!(k.as_bytes().as_slice(), bytes.as_slice());
+    for n in [0usize, 31, 33] {
+        let short_or_long = vec![0x5Au8; n];
+        let e = DataKey::from_slice(&short_or_long).expect_err("only 32 bytes is a key");
+        assert_eq!(e, VaultError::InvalidKeyLength(n));
+        // the error names the length only, never the bytes
+        assert!(!format!("{e} {e:?}").contains("5A") && !format!("{e:?}").contains("90"));
+    }
+}

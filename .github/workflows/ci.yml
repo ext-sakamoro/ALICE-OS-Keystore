@@ -65,9 +65,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test (default features)
-        run: scripts/run_tests.sh vault_oracle=9,desktop_gaps=3 -- cargo test
+        run: scripts/run_tests.sh vault_oracle=10,desktop_gaps=3 -- cargo test
       - name: Test (all features)
-        run: scripts/run_tests.sh vault_oracle=9,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features
+        run: scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features
 
   doc:
     name: doc
