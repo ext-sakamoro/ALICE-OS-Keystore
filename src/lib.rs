@@ -82,6 +82,9 @@ pub enum VaultError {
     Unavailable(String),
     /// A key store implemented outside Rust returned a key that is not 32 bytes
     InvalidKeyLength(usize),
+    /// The key cannot be recovered and retrying will not help (the hardware key that
+    /// wraps it is gone, or the wrapped blob no longer opens)
+    Irrecoverable(String),
 }
 
 impl fmt::Display for VaultError {
@@ -90,6 +93,7 @@ impl fmt::Display for VaultError {
             Self::UnknownKey(g) => write!(f, "no data key of generation {g}"),
             Self::Unavailable(why) => write!(f, "key store unavailable: {why}"),
             Self::InvalidKeyLength(n) => write!(f, "key store returned {n} bytes, expected 32"),
+            Self::Irrecoverable(why) => write!(f, "key store cannot recover this key: {why}"),
         }
     }
 }

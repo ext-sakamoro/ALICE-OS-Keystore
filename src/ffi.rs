@@ -18,8 +18,10 @@ pub struct GenerationKey {
 pub enum ForeignVaultError {
     /// No key of this generation
     UnknownKey { generation: u32 },
-    /// Cannot hand out keys now (locked, authentication refused)
+    /// Cannot hand out keys now (locked, authentication refused); a later call may succeed
     Unavailable { reason: String },
+    /// The key cannot be recovered (wrapping key gone, wrapped blob does not open); retrying will not help
+    Irrecoverable { reason: String },
 }
 
 impl std::fmt::Display for ForeignVaultError {
@@ -27,6 +29,9 @@ impl std::fmt::Display for ForeignVaultError {
         match self {
             Self::UnknownKey { generation } => write!(f, "no data key of generation {generation}"),
             Self::Unavailable { reason } => write!(f, "key store unavailable: {reason}"),
+            Self::Irrecoverable { reason } => {
+                write!(f, "key store cannot recover this key: {reason}")
+            }
         }
     }
 }
@@ -73,6 +78,7 @@ fn from_foreign(e: ForeignVaultError) -> VaultError {
     match e {
         ForeignVaultError::UnknownKey { generation } => VaultError::UnknownKey(generation),
         ForeignVaultError::Unavailable { reason } => VaultError::Unavailable(reason),
+        ForeignVaultError::Irrecoverable { reason } => VaultError::Irrecoverable(reason),
     }
 }
 
