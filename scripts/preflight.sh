@@ -132,6 +132,16 @@ step "ci.yml / doc: run"
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_run_tests.py )
 
+step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
+( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo fetch --locked )
+
+step "security-audit.yml / audit: Audit ignore guard (tests, then basic-toml)"
+(
+  export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  python3 scripts/test_audit_ignore_guard.py
+  python3 scripts/audit_ignore_guard.py basic-toml
+)
+
 step "security-audit.yml / deny: Run cargo deny check all"
 ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --all-features check all )
 

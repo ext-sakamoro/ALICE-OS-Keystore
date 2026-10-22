@@ -21,6 +21,8 @@ on:
       - 'Cargo.lock'
       - 'src/**'
       - 'deny.toml'
+      - 'scripts/audit_ignore_guard.py'
+      - 'scripts/test_audit_ignore_guard.py'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
   pull_request:
@@ -30,6 +32,8 @@ on:
       - 'Cargo.lock'
       - 'src/**'
       - 'deny.toml'
+      - 'scripts/audit_ignore_guard.py'
+      - 'scripts/test_audit_ignore_guard.py'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
   schedule:
@@ -58,6 +62,16 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # The RUSTSEC-2026-0374 ignore below stays only while its reason holds: basic-toml is
+      # in Cargo.lock (else the ignore is stale) and built by no feature (else it would hide
+      # a real dependency; cargo-deny also reports that direction). The guard fails in both
+      # cases and when it compared nothing.
+      - name: Fetch dependencies (the guard reads the dependency tree offline)
+        run: cargo fetch --locked
+      - name: Audit ignore guard (tests, then basic-toml)
+        run: |
+          python3 scripts/test_audit_ignore_guard.py
+          python3 scripts/audit_ignore_guard.py basic-toml
       # deny.toml と同期した ignore 一覧
       # RUSTSEC-2026-0374 (basic-toml, unmaintained): in Cargo.lock only. the uniffi 0.28
       # optional `bindgen` dependency (uniffi_bindgen -> askama 0.12 -> basic-toml) is

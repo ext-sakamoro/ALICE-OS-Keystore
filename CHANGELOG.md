@@ -14,3 +14,4 @@
 - `VaultError::Irrecoverable` / `ForeignVaultError::Irrecoverable` / Swift `KeystoreError.irrecoverable`: a key that cannot be recovered (wrapping key gone, wrapped blob does not open) is no longer reported as the retryable `Unavailable`
 - `MasterVault` stores the secret in numbered slots and writes the new slot before removing the old one (a failure while storing keeps the previous secret)
 - `apple/Tests`: slot rules and error classification (`swift test`)
+- `scripts/audit_ignore_guard.py` (security-audit の audit job): RUSTSEC-2026-0374 の ignore は basic-toml が Cargo.lock にあり、どの feature でも build されない間だけ有効 build される (reachable) か lock から消えた (stale) ら fail、比較できない時も fail 試験は cargo の cache だけで作る小さな crate 4 通り
