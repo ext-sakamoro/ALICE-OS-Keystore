@@ -13,12 +13,6 @@ protocol KeychainBackend {
     func createRandomKey(_ attributes: [String: Any]) throws -> SecKey
 }
 
-/// The Security framework's Keychain
-///
-/// Every query and attribute dictionary carries `kSecUseDataProtectionKeychain`: on macOS
-/// the default is the file-based keychain, while Secure Enclave keys live in the
-/// data-protection keychain, so lookups without the flag would miss them (on iOS and
-/// visionOS the data-protection keychain is the only one and the flag changes nothing).
 /// The Security framework functions SystemKeychain calls, replaceable so a test can record
 /// exactly what reaches the Security layer
 struct SecurityFunctions {
@@ -28,6 +22,12 @@ struct SecurityFunctions {
     var createRandomKey: (CFDictionary, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> SecKey? = SecKeyCreateRandomKey
 }
 
+/// The Security framework's Keychain
+///
+/// Every query and attribute dictionary carries `kSecUseDataProtectionKeychain`: on macOS
+/// the default is the file-based keychain, while Secure Enclave keys live in the
+/// data-protection keychain, so lookups without the flag would miss them (on iOS and
+/// visionOS the data-protection keychain is the only one and the flag changes nothing).
 struct SystemKeychain: KeychainBackend {
     var security = SecurityFunctions()
 

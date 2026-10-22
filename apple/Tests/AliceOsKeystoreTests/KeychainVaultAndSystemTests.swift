@@ -92,4 +92,31 @@ final class SystemKeychainDefaultsTests: XCTestCase {
         let status = SystemKeychain().add([kSecAttrService as String: "alice-os-keystore.test.\(UUID().uuidString)"])
         XCTAssertNotEqual(status, errSecSuccess)
     }
+
+    /// Two Security functions with the same signature (`SecItemAdd` and `SecItemCopyMatching`)
+    /// can be swapped in the defaults and still compile, and on an unsigned host both reject
+    /// the calls above, so the defaults are also read from the source: each member names
+    /// its own Security function
+    func testEachDefaultNamesItsOwnSecurityFunction() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/AliceOsKeystore/KeychainBackend.swift")
+        let text = try String(contentsOf: source, encoding: .utf8)
+        guard let start = text.range(of: "struct SecurityFunctions {"),
+              let end = text.range(of: "\n}", range: start.upperBound..<text.endIndex) else {
+            return XCTFail("struct SecurityFunctions not found in \(source.path)")
+        }
+        var defaults: [String: String] = [:]
+        for line in text[start.upperBound..<end.lowerBound].split(separator: "\n") {
+            let words = line.split(whereSeparator: { $0 == " " || $0 == ":" })
+            guard words.first == "var", words.count > 2, let fn = line.split(separator: "=").last else { continue }
+            defaults[String(words[1])] = fn.trimmingCharacters(in: .whitespaces)
+        }
+        XCTAssertEqual(defaults, [
+            "copyMatching": "SecItemCopyMatching",
+            "add": "SecItemAdd",
+            "delete": "SecItemDelete",
+            "createRandomKey": "SecKeyCreateRandomKey",
+        ])
+    }
 }
