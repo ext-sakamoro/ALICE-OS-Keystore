@@ -307,7 +307,7 @@ step "security-audit.yml / coverage: Run coverage"
       export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
       set -o pipefail
       cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
-        | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 == 0) { print "coverage measured nothing: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
+        | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 < 85) { print "line coverage below the 85% floor: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
     )
   } 2>&1 | tee "${log}"
   rc=${PIPESTATUS[0]}

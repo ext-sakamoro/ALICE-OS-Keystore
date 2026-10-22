@@ -252,12 +252,13 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       # the tests live in tests/, so the run must include them (--lib measured 0 of 117 regions);
-      # a summary whose TOTAL covers no lines measured nothing and fails the step
+      # a summary without TOTAL, or with line coverage under the floor, fails the step; the floor
+      # is the measured 92.79% less a margin, so a run that drops most tests fails too
       - name: Run coverage
         run: |
           set -o pipefail
           cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
-            | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 == 0) { print "coverage measured nothing: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
+            | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 < 85) { print "line coverage below the 85% floor: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
 
       - name: Upload coverage summary as artifact
         uses: actions/upload-artifact@v6
