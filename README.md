@@ -35,6 +35,33 @@ With the `uniffi` feature the crate exports a callback interface `ForeignKeyVaul
 - `MasterVault`: `.biometryCurrentSet`; opening calls `LAContext.evaluatePolicy` first and then uses that context for the key. Invalidation on a change of enrolled biometrics is Apple's documented behaviour and has not been tested here.
 - Keychain items outlive an iOS app: call `destroy()` before removing test builds.
 
+Generating the Swift binding (library mode):
+
+```sh
+cargo build --release --features uniffi
+cargo run --features uniffi --bin uniffi-bindgen -- generate \
+  --library target/release/libalice_os_keystore.dylib --language swift --out-dir generated/
+```
+
+The generated module declares `protocol ForeignKeyVault { func current() throws -> GenerationKey; func byId(generation: UInt32) throws -> Data }`. A consumer that sees both modules conforms a vault with a few lines (this snippet is typechecked against the generated binding and `apple/`):
+
+```swift
+import Foundation
+
+extension SecureEnclaveVault: ForeignKeyVault {
+    public func current() throws -> GenerationKey {
+        do { let (g, k) = try current() as (generation: UInt32, key: Data); return GenerationKey(generation: g, key: k) }
+        catch KeystoreError.unknownKey(let g) { throw ForeignVaultError.UnknownKey(generation: g) }
+        catch { throw ForeignVaultError.Unavailable(reason: "\(error)") }
+    }
+    public func byId(generation: UInt32) throws -> Data {
+        do { return try key(generation: generation) }
+        catch KeystoreError.unknownKey(let g) { throw ForeignVaultError.UnknownKey(generation: g) }
+        catch { throw ForeignVaultError.Unavailable(reason: "\(error)") }
+    }
+}
+```
+
 ## Gaps
 
 - Desktop key stores (macOS Keychain, Windows DPAPI / CNG, Linux Secret Service)

@@ -1,3 +1,4 @@
 /target
 /apple/.swiftpm
 /apple/.build
+/generated

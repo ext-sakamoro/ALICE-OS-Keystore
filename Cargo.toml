@@ -7,6 +7,15 @@ description = "Data-encryption keys held by the operating system's key store (Se
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
 publish = false
 
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+# generates the Swift / Kotlin binding from the compiled library (feature "uniffi")
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi"]
+
 [features]
 default = []
 # UniFFI callback interface: a key store implemented in Swift / Kotlin is handed to Rust as a KeyVault
@@ -17,7 +26,7 @@ uniffi = ["dep:uniffi"]
 getrandom = "0.2"
 # key bytes are zeroed on drop
 zeroize = "1"
-uniffi = { version = "0.28", optional = true }
+uniffi = { version = "0.28", optional = true, features = ["cli"] }
 
 [lints.rust]
 unsafe_code = "forbid"
