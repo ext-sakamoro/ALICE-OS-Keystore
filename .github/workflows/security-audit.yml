@@ -1,0 +1,226 @@
+name: Security & Hygiene
+
+# Shared ALICE-* security layout: audit / deny / unused deps / stub guard /
+# package integrity / coverage. The crate is not published yet, so there is no
+# semver baseline (semver-checks is added with the first release).
+# ALICE-SDF v1.7.7 (commit 52d26f9) を base に alice-os-keystore 用に調整
+#
+# 目的:
+# - RustSec advisory (CVE) の週次検知 (鍵を扱う crate として最高優先度)
+# - dep license 逸脱 (GPL 侵入等) の block
+# - 未使用依存の炙り出し
+# - 仮実装 (panic!(STUB) / dbg!) の CI gate (todo!/unimplemented! は informational)
+
+on:
+  push:
+    # `ci/**` runs the same checks on a branch before it is fast-forwarded onto main
+    branches: [main, 'ci/**']
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'deny.toml'
+      - '.github/workflows/security-audit.yml'
+      - '.github/actions/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'deny.toml'
+      - '.github/workflows/security-audit.yml'
+      - '.github/actions/**'
+  schedule:
+    # 毎週月曜 09:00 UTC = 18:00 JST
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "5"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  audit:
+    name: cargo audit (RustSec CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # deny.toml と同期した ignore 一覧
+      - name: Run cargo audit
+        run: |
+          cargo audit \
+            --deny yanked \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0141 \
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0204 \
+            --ignore RUSTSEC-2025-0020 \
+            --ignore RUSTSEC-2026-0176 \
+            --ignore RUSTSEC-2026-0177
+
+  deny:
+    name: cargo-deny (license + advisories + bans + sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # EmbarkStudios/cargo-deny-action@v2 は Docker container 内で稼働し、
+      # /github/workspace のみ mount するため sibling path dep が見えず fail する
+      # Installed directly: the install action resolves a different version than
+# the pinned toolchain expects and fails on a clean runner
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Run cargo deny check all
+        run: cargo deny --all-features check all
+
+  unused-deps:
+    name: cargo-machete (unused dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      # false-positive は Cargo.toml の [package.metadata.cargo-machete] ignored で除外
+      - uses: bnjbvr/cargo-machete@main
+
+  stub-guard:
+    name: Stub / mock / dbg guard (grep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # `todo!()` / `unimplemented!()` are the endorsed fail-fast idiom here, so
+      # fail-fast idiom として endorse されている → block しない、warn only
+      # → block 対象は panic!(STUB) (explicit STUB marker) と dbg!() のみ
+      # → comment 行 (^\s*//) は除外して source code のみ検知
+      - name: Block panic!(STUB) in src/**
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'panic!\([^)]*STUB' \
+            src/ --include="*.rs" \
+            --exclude-dir=bin \
+            | grep -v ':[[:space:]]*//' \
+            | grep -vE ':[[:space:]]*/\*' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "❌ Explicit STUB panic detected in src/ (production path):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "✓ No panic!(STUB) in src/"
+
+      - name: Detect todo! / unimplemented! (informational, not blocking)
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'todo!\(|unimplemented!\(' \
+            src/ --include="*.rs" \
+            --exclude-dir=bin \
+            | grep -v ':[[:space:]]*//' \
+            | grep -vE ':[[:space:]]*/\*' \
+            || true)
+          if [ -n "$hits" ]; then
+            count=$(echo "$hits" | wc -l | tr -d ' ')
+            echo "::warning::${count} todo!()/unimplemented!() marker(s) in src/ (informational: these are the endorsed fail-fast idiom, not stubs):"
+            echo "$hits" | head -20
+          else
+            echo "✓ No todo!/unimplemented! markers in src/"
+          fi
+
+      - name: Detect dbg!() residual in src/**
+        run: |
+          set -eo pipefail
+          hits=$(grep -rn 'dbg!(' src/ --include="*.rs" || true)
+          if [ -n "$hits" ]; then
+            echo "❌ dbg!() macro left in src/:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "✓ No dbg!() in src/"
+
+      - name: Detect TODO / FIXME / XXX / HACK (informational)
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include="*.rs" || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::TODO/FIXME/XXX/HACK found in src/ (informational, not blocking):"
+            echo "$hits" | head -50
+          else
+            echo "✓ No TODO/FIXME/XXX/HACK in src/"
+          fi
+
+  package-integrity:
+    name: Package integrity (publish される .crate が build できるか)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      # publish される .crate に必要な file が全部入っているかを見る
+      #
+      # include_str! / include_bytes! が package 境界を越える、exclude を効かせ過ぎる、
+      # 必要 file が漏れる — これらは repo / workspace に file がある限り
+      # cargo build も cargo test も clippy も preflight も全部通り、
+      # crates.io から取得した利用者だけが compile 不能になる
+      # (2026-09-28 ALICE-LOL の lol.gbnf で実例)
+      #
+      # semver-checks は baseline を build するので結果的に検出するが、
+      # (a) 壊れた版を publish した後にしか分からない
+      # (b) 未 publish crate は baseline が無く発火しない ので予防にならない
+      - name: cargo package (.crate を作る)
+        # --no-verify: 未 publish の sibling に path dep がある repo では verify step が
+        #   registry 解決で落ちる 展開後の隔離 build が本体なので verify は不要
+        run: cargo package --no-verify --allow-dirty
+
+      - name: 展開して隔離 build
+        run: |
+          set -euo pipefail
+          crate=$(find target/package -maxdepth 1 -name '*.crate' | head -1)
+          [ -n "$crate" ] || { echo "::error::.crate が生成されていない"; exit 1; }
+          echo "packaged: $(basename "$crate") ($(du -h "$crate" | cut -f1))"
+          tmp=$(mktemp -d)
+          tar xzf "$crate" -C "$tmp"
+          cd "$tmp"/*/
+          # 親 workspace を継承すると member 扱いになり、境界を越えた file が
+          # 再び見えてしまう (検査の意味が消える) ので単独 package として build
+          printf '\n[workspace]\n' >> Cargo.toml
+          cargo check --all-features
+
+  coverage:
+    name: Coverage (cargo-llvm-cov、informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run coverage
+        run: |
+          cargo llvm-cov --lib --summary-only 2>&1 | tee coverage-summary.txt
+
+      - name: Upload coverage summary as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-summary
+          path: coverage-summary.txt
+          retention-days: 30

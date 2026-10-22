@@ -1,0 +1,100 @@
+name: CI
+
+# fmt / clippy / test (3 OS) / doc / Apple (iOS libraries, Swift binding, Swift package) /
+# scripts. Tests run through scripts/run_tests.sh, which fails a named test binary that
+# ran fewer tests than its minimum (a feature mismatch cannot turn a step into a no-op).
+
+on:
+  push:
+    # `ci/**` runs the same checks on a branch before it is fast-forwarded onto main
+    branches: [main, 'ci/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (default features, all targets)
+        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic
+      - name: Clippy (all features, all targets)
+        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (default features)
+        run: scripts/run_tests.sh vault_oracle=8,desktop_gaps=3 -- cargo test
+      - name: Test (all features)
+        run: scripts/run_tests.sh vault_oracle=8,desktop_gaps=3,foreign_oracle=4 -- cargo test --all-features
+
+  doc:
+    name: doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTDOCFLAGS: "-Dwarnings"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --all-features
+
+  apple:
+    name: Apple (iOS libraries, Swift binding, Swift package)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/apple_check.sh
+
+  scripts:
+    name: scripts (run_tests.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 scripts/test_run_tests.py

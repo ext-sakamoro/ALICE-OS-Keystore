@@ -2,3 +2,8 @@
 /apple/.swiftpm
 /apple/.build
 /generated
+fuzz/target
+fuzz/corpus
+fuzz/artifacts
+fuzz/coverage
+tools/uniffi-bindgen/target

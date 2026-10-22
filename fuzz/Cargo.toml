@@ -1,0 +1,39 @@
+[package]
+name = "alice-os-keystore-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.alice-os-keystore]
+path = ".."
+features = ["uniffi"]
+
+# Listed so `cargo machete` does not report it as unused: the fuzz harness
+# pulls it in through a macro, which the static scan cannot see
+[package.metadata.cargo-machete]
+ignored = ["libfuzzer-sys"]
+
+[[bin]]
+name = "fuzz_foreign_key_bytes"
+path = "fuzz_targets/fuzz_foreign_key_bytes.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_memory_vault_ops"
+path = "fuzz_targets/fuzz_memory_vault_ops.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_foreign_errors"
+path = "fuzz_targets/fuzz_foreign_errors.rs"
+doc = false
+
+[workspace]
+members = ["."]

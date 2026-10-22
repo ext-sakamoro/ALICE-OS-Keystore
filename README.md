@@ -35,11 +35,11 @@ With the `uniffi` feature the crate exports a callback interface `ForeignKeyVaul
 - `MasterVault`: `.biometryCurrentSet`; opening calls `LAContext.evaluatePolicy` first and then uses that context for the key. Invalidation on a change of enrolled biometrics is Apple's documented behaviour and has not been tested here.
 - Keychain items outlive an iOS app: call `destroy()` before removing test builds.
 
-Generating the Swift binding (library mode):
+Generating the Swift binding (library mode; the generator is a separate tool crate so that its build-time dependencies stay out of the library):
 
 ```sh
 cargo build --release --features uniffi
-cargo run --features uniffi --bin uniffi-bindgen -- generate \
+cargo run --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
   --library target/release/libalice_os_keystore.dylib --language swift --out-dir generated/
 ```
 

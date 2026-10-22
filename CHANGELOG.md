@@ -9,3 +9,5 @@
 - `uniffi` feature: `ffi::ForeignKeyVault` callback interface and `ffi::ForeignVaultAdapter` (accepts only 32-byte keys, keeps the error kind)
 - `desktop::{MacosKeychainVault, WindowsDpapiVault, LinuxSecretServiceVault}`: not implemented, every call fails fast
 - `apple/` Swift package: `SecureEnclaveVault`, `MasterVault`, `KeychainVault`
+- CI: fmt / clippy (pedantic, both feature sets) / test on Linux, macOS, Windows through `scripts/run_tests.sh` (each test binary has a minimum count) / doc / Apple (`scripts/apple_check.sh`: iOS and iOS Simulator libraries, the generated Swift binding, the Swift package for device and Simulator, and the README's conformance snippet typechecked) / security & hygiene (audit, deny, unused dependencies, stub guard, package integrity, coverage) / fuzz (3 targets) / public text / line endings; `scripts/preflight.sh` generated from the workflows
+- `tools/uniffi-bindgen`: the binding generator as a separate tool crate, so that its build-time dependencies (askama 0.12 -> basic-toml, unmaintained) stay out of the library

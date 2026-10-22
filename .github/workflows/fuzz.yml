@@ -1,0 +1,133 @@
+name: Fuzz
+
+# Shared ALICE-* fuzz layout: build every target on nightly, then replay the
+# corpus time-boxed. The build is the hard gate; the replay is informational
+# because a timeout is not a crash.
+# ALICE-SDF v1.7.7 (commit 52d26f9) を base に alice-os-keystore 用に調整
+#
+# 目的:
+# - 3 fuzz target を time-boxed 実行:
+#   - fuzz_foreign_key_bytes: 外部実装が返す任意長の bytes を adapter が 32 byte だけ受け取ること
+#   - fuzz_memory_vault_ops: insert / retire / generate の任意の列で current が最大の世代を返すこと
+#   - fuzz_foreign_errors: 外部実装の error の種類が保たれること
+#
+# 罠:
+# - cargo-fuzz は nightly toolchain 必須
+
+on:
+  push:
+    # ci/**: the same checks on a branch before it is fast-forwarded to main
+    branches: [main, 'ci/**']
+    paths:
+      - 'src/**'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    # 毎日 03:00 UTC = 12:00 JST (idle 時間帯)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: 'Per-target fuzz duration (seconds)'
+        required: false
+        default: '60'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz — ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # build + a 60 s run normally take under 10 min
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_foreign_key_bytes
+          - fuzz_memory_vault_ops
+          - fuzz_foreign_errors
+    steps:
+      - uses: actions/checkout@v5
+
+      # cargo-fuzz は nightly toolchain 必須
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # build は blocking: compile error を continue-on-error で隠さない
+      # (job-level continue-on-error だと fuzz target の compile error が
+      #  green 表示で silent になる)
+      - name: Build fuzz target
+        run: |
+          cd fuzz
+          cargo +nightly fuzz build "${{ matrix.target }}"
+
+      - name: Set fuzz duration
+        id: dur
+        run: |
+          DURATION="${{ github.event.inputs.duration_seconds }}"
+          if [ -z "$DURATION" ]; then
+            DURATION=60
+          fi
+          echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
+
+      # run は informational: crash 発見は block せず artifact で triage
+      # A crash fails the job (it is a defect, not informational). Each
+      # target must also execute at least one input: a run that never executed
+      # anything is not a pass. fuzz/regressions/<target> (committed crash
+      # inputs) is replayed as an extra corpus, so a fixed crash stays fixed.
+      # The summary records runs and libFuzzer's coverage
+      - name: Run fuzz target (time-boxed)
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          cd fuzz
+          T="${{ matrix.target }}"
+          extra=()
+          if [ -d "regressions/$T" ]; then extra=("regressions/$T"); fi
+          mkdir -p "corpus/$T"
+          set +e
+          cargo +nightly fuzz run "$T" "corpus/$T" "${extra[@]}" -- \
+            -max_total_time=${{ steps.dur.outputs.seconds }} 2>&1 | tee fuzz-run.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          runs=$(grep -oE "Done [0-9]+ runs" fuzz-run.log | tail -1 | grep -oE "[0-9]+" || true)
+          cov=$(grep -oE "DONE +cov: [0-9]+" fuzz-run.log | tail -1 | grep -oE "[0-9]+$" || true)
+          status=ok
+          if [ "$rc" -ne 0 ]; then status="crashed (exit $rc)"; fi
+          # the row is written before failing, so a crash still shows up here
+          echo "| $T | ${runs:-0} runs | cov ${cov:-?} | $status |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          if [ "${runs:-0}" -le 0 ]; then
+            echo "::error::fuzz target $T executed 0 inputs"
+            exit 1
+          fi
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
