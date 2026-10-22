@@ -35,7 +35,7 @@ def check(crate, root):
     if crate not in names:
         return 1, f"audit_ignore_guard: {crate} is no longer in Cargo.lock: the ignore is stale, remove it"
     tree = subprocess.run(
-        ["cargo", "tree", "--offline", "-i", crate, "--all-features", "-e", "all", "--target", "all"],
+        ["cargo", "tree", "-i", crate, "--all-features", "-e", "all", "--target", "all"],
         cwd=root, capture_output=True, text=True,
     )
     if tree.returncode != 0:

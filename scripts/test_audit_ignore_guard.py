@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests of scripts/audit_ignore_guard.py on small throwaway crates (offline, from the cargo cache).
+"""Tests of scripts/audit_ignore_guard.py on small throwaway crates (resolved from crates.io; CI starts with an empty or partial cargo cache).
 
   - lock-only (uniffi 0.28 without its generator)  -> 0 (ignore valid)
   - reachable (uniffi 0.28 with `cli`)             -> 1 (built: the ignore would hide it)
@@ -28,7 +28,7 @@ def crate(tmp, name, deps, table="[dependencies]", extra=""):
     (d / "Cargo.toml").write_text(
         f'[package]\nname = "{name}"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n'
         f"{table}\n{deps}\n\n{extra}[workspace]\n", encoding="utf-8")
-    subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=d, check=True, capture_output=True)
+    subprocess.run(["cargo", "generate-lockfile"], cwd=d, check=True, capture_output=True)
     return d
 
 
