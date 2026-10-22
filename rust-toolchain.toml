@@ -1,0 +1,6 @@
+# Rust toolchain pin. Without it, clippy lints differ between machines.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim"]
+profile = "minimal"

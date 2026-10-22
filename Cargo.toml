@@ -1,0 +1,23 @@
+[package]
+name = "alice-os-keystore"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Data-encryption keys held by the operating system's key store (Secure Enclave and Keychain on Apple platforms), behind one KeyVault trait"
+authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
+publish = false
+
+[features]
+default = []
+# UniFFI callback interface: a key store implemented in Swift / Kotlin is handed to Rust as a KeyVault
+uniffi = ["dep:uniffi"]
+
+[dependencies]
+# OS entropy for MemoryVault::generate
+getrandom = "0.2"
+# key bytes are zeroed on drop
+zeroize = "1"
+uniffi = { version = "0.28", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
