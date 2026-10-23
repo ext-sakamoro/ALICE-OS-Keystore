@@ -67,10 +67,20 @@ uniffi::setup_scaffolding!();
 /// Keys kept only in this process's memory
 ///
 /// For tests and for data that must not outlive the process: nothing is
-/// persisted and nothing is protected at rest.
+/// persisted and nothing is protected at rest. Like the desktop stores it never
+/// issues a generation number twice: [`MemoryVault::rotate`] takes the next number
+/// above every generation ever stored, and a retired generation is
+/// [`KeyProviderError::Irrecoverable`].
 #[derive(Default)]
 pub struct MemoryVault {
-    keys: Mutex<BTreeMap<KeyGeneration, Key>>,
+    state: Mutex<VaultState>,
+}
+
+#[derive(Default)]
+struct VaultState {
+    keys: BTreeMap<KeyGeneration, Key>,
+    /// The highest generation ever stored (0 for none)
+    issued: KeyGeneration,
 }
 
 impl MemoryVault {
@@ -80,10 +90,11 @@ impl MemoryVault {
         Self::default()
     }
 
-    // a panic while the lock was held cannot leave the map half-written (every
-    // operation is one insert / remove / read), so a poisoned lock is still usable
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<KeyGeneration, Key>> {
-        self.keys
+    // a panic while the lock was held cannot leave the state half-written (every
+    // operation updates the map and the high-water mark without a call that can panic in
+    // between), so a poisoned lock is still usable
+    fn lock(&self) -> std::sync::MutexGuard<'_, VaultState> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -94,11 +105,13 @@ impl MemoryVault {
     /// When `generation` is 0 (generations start at 1; 0 is never a key)
     pub fn insert(&self, generation: KeyGeneration, key: Key) {
         assert_ne!(generation, 0, "generation 0 is never a key");
-        self.lock().insert(generation, key);
+        let mut state = self.lock();
+        state.keys.insert(generation, key);
+        state.issued = state.issued.max(generation);
     }
 
-    /// Add a fresh random key as the next generation (1 for an empty vault) and return
-    /// it; the older keys stay
+    /// Add a fresh random key as the next generation (above every generation ever stored,
+    /// 1 for a new vault) and return it; the older keys stay
     ///
     /// # Errors
     /// [`KeyProviderError::Unavailable`] when the operating system's entropy source fails,
@@ -106,26 +119,30 @@ impl MemoryVault {
     pub fn rotate(&self) -> Result<KeyGeneration, KeyProviderError> {
         let key =
             Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))?;
-        let mut keys = self.lock();
-        let next = match keys.keys().next_back() {
-            None => 1,
-            Some(&g) => g.checked_add(1).ok_or(KeyProviderError::Unavailable(
+        let mut state = self.lock();
+        let next = state
+            .issued
+            .checked_add(1)
+            .ok_or(KeyProviderError::Unavailable(
                 "generation counter exhausted",
-            ))?,
-        };
-        keys.insert(next, key);
+            ))?;
+        state.keys.insert(next, key);
+        state.issued = next;
         Ok(next)
     }
 
-    /// Forget `generation` (after every value sealed under it was resealed)
+    /// Forget `generation` (after every value sealed under it was resealed); its number is
+    /// not issued again
     pub fn retire(&self, generation: KeyGeneration) {
-        self.lock().remove(&generation);
+        self.lock().keys.remove(&generation);
     }
 }
 
 impl KeyProvider for MemoryVault {
+    /// The highest generation still held (a retired generation was removed on purpose)
     fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
         self.lock()
+            .keys
             .iter()
             .next_back()
             .map(|(g, k)| (*g, k.clone()))
@@ -136,9 +153,13 @@ impl KeyProvider for MemoryVault {
         if generation == 0 {
             return Err(KeyProviderError::UnknownGeneration(0));
         }
-        self.lock()
-            .get(&generation)
-            .cloned()
-            .ok_or(KeyProviderError::UnknownGeneration(generation))
+        let state = self.lock();
+        match state.keys.get(&generation) {
+            Some(key) => Ok(key.clone()),
+            None if generation <= state.issued => Err(KeyProviderError::Irrecoverable(
+                "the key of this generation was retired",
+            )),
+            None => Err(KeyProviderError::UnknownGeneration(generation)),
+        }
     }
 }

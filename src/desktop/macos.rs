@@ -2,7 +2,8 @@
 //!
 //! Each generation is one generic password item in the login keychain: service = the
 //! store's service name, account = `gen-<n>` (decimal, no leading zero), data = the 32
-//! key bytes, created once and never rewritten. Items are added with `SecItemAdd`, which
+//! key bytes, created once and never rewritten; and a marker item `issued-<n>` for every
+//! generation issued (see the generation model in `desktop`). Items are added with `SecItemAdd`, which
 //! refuses an item that already exists, so two processes creating the same generation at
 //! once cannot both win: the loser reads the item the winner wrote.
 //!
@@ -22,6 +23,7 @@ use security_framework::item::{ItemAddOptions, ItemAddValue, ItemClass, ItemSear
 use security_framework::passwords::get_generic_password;
 use zeroize::Zeroize;
 
+use super::{by_generation_of, current_of, generation_of, rotate_of, GenerationItems, Inventory};
 use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
 
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
@@ -30,9 +32,8 @@ const ERR_SEC_USER_CANCELED: i32 = -128;
 const ERR_SEC_AUTH_FAILED: i32 = -25293;
 const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
 
-/// How often one call re-reads the items when another process changed them meanwhile
-/// (each retry follows an item that someone else added, so a retry is progress)
-const ATTEMPTS: usize = 64;
+const KEY_PREFIX: &str = "gen-";
+const MARKER_PREFIX: &str = "issued-";
 
 /// Keys kept in the macOS login keychain, one item per generation
 pub struct MacosKeychainStore {
@@ -46,19 +47,6 @@ fn unavailable(e: SecError) -> KeyProviderError {
         ERR_SEC_INTERACTION_NOT_ALLOWED => "the keychain is locked or cannot ask for access now",
         _ => "the keychain refused the request",
     })
-}
-
-fn account(generation: KeyGeneration) -> String {
-    format!("gen-{generation}")
-}
-
-/// The generation an account name stands for, `None` for any other name
-fn generation_of(account: &str) -> Option<KeyGeneration> {
-    let digits = account.strip_prefix("gen-")?;
-    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
 }
 
 impl MacosKeychainStore {
@@ -78,8 +66,36 @@ impl MacosKeychainStore {
         }
     }
 
-    /// The generations the keychain holds for this service, ascending
-    fn generations(&self) -> Result<Vec<KeyGeneration>, KeyProviderError> {
+    /// Add a fresh random key as the next generation (above every generation ever issued,
+    /// 1 when the service holds none) and return it; the older items stay
+    ///
+    /// # Errors
+    /// [`KeyProviderError::Unavailable`] when the keychain refuses, the entropy source
+    /// fails, the generation counter would overflow, or other processes keep adding
+    /// generations faster than this call can claim one
+    pub fn rotate(&self) -> Result<KeyGeneration, KeyProviderError> {
+        rotate_of(self)
+    }
+
+    /// Add a generic password item; `false` when the account already exists
+    fn add(&self, account: &str, data: &[u8]) -> Result<bool, KeyProviderError> {
+        let mut item = ItemAddOptions::new(ItemAddValue::Data {
+            class: ItemClass::generic_password(),
+            data: CFData::from_buffer(data),
+        });
+        item.set_service(&self.service)
+            .set_account_name(account)
+            .set_label(format!("{} {account}", self.service));
+        match item.add() {
+            Ok(()) => Ok(true),
+            Err(e) if e.code() == ERR_SEC_DUPLICATE_ITEM => Ok(false),
+            Err(e) => Err(unavailable(e)),
+        }
+    }
+}
+
+impl GenerationItems for MacosKeychainStore {
+    fn inventory(&self) -> Result<Inventory, KeyProviderError> {
         let found = ItemSearchOptions::new()
             .class(ItemClass::generic_password())
             .service(&self.service)
@@ -88,21 +104,25 @@ impl MacosKeychainStore {
             .search();
         let items = match found {
             Ok(items) => items,
-            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(Vec::new()),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(Inventory::default()),
             Err(e) => return Err(unavailable(e)),
         };
-        let mut generations: Vec<KeyGeneration> = items
-            .iter()
-            .filter_map(|item| generation_of(item.simplify_dict()?.get("acct")?))
-            .collect();
-        generations.sort_unstable();
-        generations.dedup();
-        Ok(generations)
+        let mut inv = Inventory::default();
+        for item in &items {
+            let Some(account) = item.simplify_dict().and_then(|d| d.get("acct").cloned()) else {
+                continue;
+            };
+            if let Some(g) = generation_of(&account, KEY_PREFIX, "") {
+                inv.keys.insert(g);
+            } else if let Some(g) = generation_of(&account, MARKER_PREFIX, "") {
+                inv.issued.insert(g);
+            }
+        }
+        Ok(inv)
     }
 
-    /// The key of `generation`, `None` when there is no such item
     fn read(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
-        match get_generic_password(&self.service, &account(generation)) {
+        match get_generic_password(&self.service, &format!("{KEY_PREFIX}{generation}")) {
             Ok(mut bytes) => {
                 let key = Key::from_slice(&bytes).map_err(|_| {
                     KeyProviderError::Irrecoverable("the keychain item is not a 32-byte key")
@@ -115,86 +135,24 @@ impl MacosKeychainStore {
         }
     }
 
-    /// Create `generation` with a fresh random key; `None` when the item already exists
-    fn add(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
-        let key =
-            Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))?;
-        let mut item = ItemAddOptions::new(ItemAddValue::Data {
-            class: ItemClass::generic_password(),
-            data: CFData::from_buffer(key.as_bytes()),
-        });
-        item.set_service(&self.service)
-            .set_account_name(account(generation))
-            .set_label(format!("{} key generation {generation}", self.service));
-        match item.add() {
-            Ok(()) => Ok(Some(key)),
-            Err(e) if e.code() == ERR_SEC_DUPLICATE_ITEM => Ok(None),
-            Err(e) => Err(unavailable(e)),
-        }
+    fn create(&self, generation: KeyGeneration, key: &Key) -> Result<bool, KeyProviderError> {
+        self.add(&format!("{KEY_PREFIX}{generation}"), key.as_bytes())
     }
 
-    /// Add a fresh random key as the next generation (1 when the service holds none) and
-    /// return it; the older items stay
-    ///
-    /// # Errors
-    /// [`KeyProviderError::Unavailable`] when the keychain refuses, the entropy source
-    /// fails, the generation counter would overflow, or other processes keep adding
-    /// generations faster than this call can claim one
-    pub fn rotate(&self) -> Result<KeyGeneration, KeyProviderError> {
-        for _ in 0..ATTEMPTS {
-            let next = match self.generations()?.last() {
-                None => 1,
-                Some(&max) => max.checked_add(1).ok_or(KeyProviderError::Unavailable(
-                    "generation counter exhausted",
-                ))?,
-            };
-            if self.add(next)?.is_some() {
-                return Ok(next);
-            }
-        }
-        Err(KeyProviderError::Unavailable(
-            "the keychain items kept changing during the call",
-        ))
+    fn mark(&self, generation: KeyGeneration) -> Result<(), KeyProviderError> {
+        // the marker holds no secret; its presence is the record
+        self.add(&format!("{MARKER_PREFIX}{generation}"), b"issued")
+            .map(|_| ())
     }
 }
 
 impl KeyProvider for MacosKeychainStore {
-    /// The highest generation, creating generation 1 when the service holds none
+    /// The newest generation, creating generation 1 when the service holds none
     fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
-        for _ in 0..ATTEMPTS {
-            match self.generations()?.last() {
-                Some(&max) => {
-                    if let Some(key) = self.read(max)? {
-                        return Ok((max, key));
-                    }
-                }
-                None => {
-                    if let Some(key) = self.add(1)? {
-                        return Ok((1, key));
-                    }
-                }
-            }
-        }
-        Err(KeyProviderError::Unavailable(
-            "the keychain items kept changing during the call",
-        ))
+        current_of(self)
     }
 
     fn by_generation(&self, generation: KeyGeneration) -> Result<Key, KeyProviderError> {
-        if generation == 0 {
-            return Err(KeyProviderError::UnknownGeneration(0));
-        }
-        if let Some(key) = self.read(generation)? {
-            return Ok(key);
-        }
-        // generations are added in order and never removed by this store: a higher one
-        // shows that this one existed
-        if self.generations()?.iter().any(|&g| g > generation) {
-            Err(KeyProviderError::Irrecoverable(
-                "the key of this generation was removed from the keychain",
-            ))
-        } else {
-            Err(KeyProviderError::UnknownGeneration(generation))
-        }
+        by_generation_of(self, generation)
     }
 }
