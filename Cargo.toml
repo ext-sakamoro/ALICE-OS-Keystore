@@ -17,7 +17,7 @@ uniffi = ["dep:uniffi"]
 
 [dependencies]
 # OS entropy for MemoryVault::generate
-getrandom = "0.2"
+getrandom = "0.4"
 # key bytes are zeroed on drop
 zeroize = "1"
 uniffi = { version = "=0.28.3", optional = true }
