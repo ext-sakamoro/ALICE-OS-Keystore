@@ -76,15 +76,16 @@ jobs:
       # read_secret: 12 on unix (the 11 pseudo-terminal tests are unix only), 1 on Windows
       # exchange: 6 on Linux (EXDEV across /dev/shm is Linux only), 5 on macOS, 1 on Windows (Unsupported)
       # macos_keychain: 10 on macOS against the runner's login keychain, required there (the file compiles to 0 tests elsewhere)
+      # windows_dpapi: 13 on Windows against the runner user's DPAPI, required there (0 tests elsewhere)
       # (chosen in the shell, so that scripts/preflight.sh runs the same command; RUNNER_OS is unset locally)
       - name: Test (default features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=10"; fi
-          scripts/run_tests.sh vault_oracle=10,desktop_gaps=2,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=13"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=10"; fi
+          scripts/run_tests.sh vault_oracle=10,desktop_gaps=1,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test
       - name: Test (all features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=10"; fi
-          scripts/run_tests.sh vault_oracle=10,desktop_gaps=2,foreign_oracle=7,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test --all-features
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=13"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=10"; fi
+          scripts/run_tests.sh vault_oracle=10,desktop_gaps=1,foreign_oracle=7,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test --all-features
 
   doc:
     name: doc
