@@ -250,6 +250,7 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
+#   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
 #   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, needs network / runner-only)
 #   - security-audit.yml:tools-audit:Run cargo audit on the tool's lock (continue-on-error, no count guard for cargo audit)
@@ -299,6 +300,13 @@ step "security-audit.yml / audit: Audit ignore guard (tests, then basic-toml)"
   export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   python3 scripts/test_audit_ignore_guard.py
   python3 scripts/audit_ignore_guard.py basic-toml
+)
+
+step "security-audit.yml / deny: Advisory hold guard (tests, then the holds)"
+(
+  export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  python3 scripts/test_advisory_hold_guard.py
+  python3 scripts/advisory_hold_guard.py
 )
 
 step "security-audit.yml / deny: Run cargo deny check all"
@@ -416,15 +424,15 @@ fi
 step "ci.yml / test: Test (default features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
-  scripts/run_tests.sh vault_oracle=11,desktop_gaps=1,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
+  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test
 )
 
 step "ci.yml / test: Test (all features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
-  scripts/run_tests.sh vault_oracle=11,desktop_gaps=1,foreign_oracle=7,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test --all-features
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
+  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
 )
 
 step "ci.yml / apple: run"
