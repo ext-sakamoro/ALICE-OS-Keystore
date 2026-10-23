@@ -149,3 +149,25 @@ fn the_decoder_holds_nothing_once_its_bytes_are_taken() {
     while d.next_byte().is_some() {}
     assert!(d.is_clear());
 }
+
+/// Dropping the decoder zeroes what it still holds: a waiting high half and
+/// bytes not taken (the state an error or the end of the input leaves behind)
+#[test]
+fn dropping_the_decoder_leaves_its_storage_zero() {
+    use crate::sys::watch_alloc::freed_all_zero;
+    // a waiting high half
+    let mut d = Box::new(Utf16Bytes::default());
+    d.feed(0xD83D);
+    assert!(!d.is_clear());
+    assert!(freed_all_zero(d), "a waiting half was left in freed memory");
+    // bytes not taken
+    let mut d = Box::new(Utf16Bytes::default());
+    d.feed(u16::from(b'k'));
+    assert!(!d.is_clear());
+    assert!(
+        freed_all_zero(d),
+        "bytes not taken were left in freed memory"
+    );
+    // the allocator check has teeth: a block freed with data is reported
+    assert!(!freed_all_zero(Box::new([0x5Au8; 16])));
+}

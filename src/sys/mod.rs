@@ -17,3 +17,7 @@ pub(crate) use unix::NoEcho;
 mod windows;
 #[cfg(windows)]
 pub(crate) use windows::NoEcho;
+
+/// Test-only allocator for observing what a `Drop` leaves in a freed block
+#[cfg(test)]
+pub(crate) mod watch_alloc;

@@ -29,7 +29,10 @@
 //! dropped. On Windows the console is read as UTF-16 (so text in any code page
 //! arrives as typed) and converted to UTF-8 one unit at a time in fixed storage
 //! that is zeroed as it is consumed; an unpaired surrogate is refused as
-//! [`PromptError::NotUtf8`].
+//! [`PromptError::NotUtf8`]. A Windows console in line mode does not report the
+//! end of input for Ctrl-Z: it arrives as the byte `0x1A` within the line, so
+//! [`PromptError::Closed`] is in practice not returned there (Ctrl-C ends the
+//! process as described above).
 //!
 //! ```no_run
 //! let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?;
