@@ -102,19 +102,22 @@ mod pty {
     }
 
     #[test]
-    fn a_closed_terminal_is_an_error_and_echo_is_restored() {
-        // the controller goes away before a line arrives: the read ends without a newline
-        let (controller, terminal) = pair();
+    fn input_that_ends_without_a_newline_is_an_error_and_echo_is_restored() {
+        // the end-of-file character (Ctrl-D) delivers "abc" without a newline, a second one at
+        // the start of the line makes the read return 0: the input ended before the line did
+        // (the controller stays open: on Linux a terminal whose controller closed no longer
+        // answers tcgetattr, so the mode could not be checked afterwards)
+        let (mut controller, terminal) = pair();
         let watched = terminal.try_clone().unwrap();
         let reader = std::thread::spawn(move || read_secret_from(&terminal, &mut Vec::new(), "> "));
         wait_for_echo_off(&watched);
-        drop(controller);
+        let eof =
+            tcgetattr(&watched).unwrap().special_codes[rustix::termios::SpecialCodeIndex::VEOF];
+        controller.write_all(&[b'a', b'b', b'c', eof, eof]).unwrap();
         let r = reader.join().unwrap();
-        assert!(
-            matches!(r, Err(PromptError::Io(_) | PromptError::Closed)),
-            "{r:?}"
-        );
+        assert!(matches!(r, Err(PromptError::Closed)), "{r:?}");
         assert!(echo_on(&watched), "echo was not restored after an error");
+        drop(controller);
     }
 
     #[test]
