@@ -9,6 +9,7 @@ on:
 jobs:
   stress:
     runs-on: macos-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
@@ -19,11 +20,27 @@ jobs:
           set -u
           pass=0
           for i in $(seq 1 20); do
-            out=$(cargo test --all-features --test macos_keychain 2>&1) || true
-            if printf '%s\n' "$out" | grep -q '^test result: ok. 18 passed; 0 failed'; then
+            log="$RUNNER_TEMP/run-$i.log"
+            cargo test --all-features --test macos_keychain >"$log" 2>&1 &
+            pid=$!
+            waited=0
+            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 2; waited=$((waited + 2)); done
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "run $i: still running after 300 s"
+              cat "$log"
+              ps -axo pid,ppid,etime,command | grep -E 'macos_keychain|alice-os-keystore|security' | grep -v grep || true
+              for t in $(pgrep -f 'deps/macos_keychain-'); do echo "== sample $t"; sample "$t" 5 2>&1 | head -200; done
+              pkill -f 'deps/macos_keychain-' || true
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              continue
+            fi
+            wait "$pid" || true
+            if grep -q '^test result: ok. 18 passed; 0 failed' "$log"; then
               pass=$((pass + 1))
+              echo "run $i: ok (${waited} s)"
             else
-              echo "run $i:"; printf '%s\n' "$out" | grep -E 'panicked|FAILED|test result' | head -10
+              echo "run $i:"; grep -E 'panicked|FAILED|test result' "$log" | head -10
             fi
           done
           echo "macos_keychain: ${pass}/20 runs passed all 18"
