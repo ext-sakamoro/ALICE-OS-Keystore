@@ -48,6 +48,7 @@ use zeroize::Zeroize;
 pub mod desktop;
 #[cfg(feature = "uniffi")]
 pub mod ffi;
+pub mod fs;
 #[cfg(any(unix, windows))]
 pub mod prompt;
 #[cfg(any(unix, windows))]
