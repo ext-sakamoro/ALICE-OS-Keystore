@@ -82,16 +82,34 @@ fn rotate_refuses_to_overflow_the_generation() {
 }
 
 #[test]
-fn retire_removes_a_generation() {
+fn retire_removes_a_generation_that_then_cannot_be_recovered() {
     let v = MemoryVault::new();
     v.insert(1, Key::from_bytes([1; 32]));
     v.insert(2, Key::from_bytes([2; 32]));
     v.retire(1);
-    assert_eq!(
-        v.by_generation(1).err().expect("an error"),
-        KeyProviderError::UnknownGeneration(1)
-    );
+    // it existed, so it is gone rather than unknown
+    assert!(matches!(
+        v.by_generation(1),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
     assert_eq!(v.current().unwrap().0, 2);
+    assert_eq!(
+        v.by_generation(3).err().expect("an error"),
+        KeyProviderError::UnknownGeneration(3)
+    );
+}
+
+#[test]
+fn a_retired_newest_generation_is_never_issued_again() {
+    let v = MemoryVault::new();
+    assert_eq!(v.rotate().unwrap(), 1);
+    assert_eq!(v.rotate().unwrap(), 2);
+    v.retire(2);
+    assert_eq!(v.rotate().unwrap(), 3);
+    assert!(matches!(
+        v.by_generation(2),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
 }
 
 #[test]

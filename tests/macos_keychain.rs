@@ -1,7 +1,9 @@
 //! Oracle for the macOS Keychain store, against the real login keychain.
 //!
 //! The model (fixed before the implementation): one 32-byte random key per generation, each a
-//! generic password item with service = the store's service name and account = `gen-<n>`.
+//! generic password item with service = the store's service name and account = `gen-<n>`, and
+//! for each generation ever issued a create-only marker item `issued-<n>`, so no generation
+//! number is issued twice even when its key item is removed.
 //! `current` returns the highest generation, creating generation 1 when the service holds none;
 //! `rotate` adds `max + 1` and keeps the older items; `by_generation(g)` returns the item's bytes,
 //! `UnknownGeneration` when no item `gen-<g>` exists and no higher generation does either, and
@@ -70,7 +72,7 @@ fn the_first_current_creates_generation_1_as_one_keychain_item() {
     assert!(s.accounts().is_empty());
     let (g, k) = store.current().unwrap();
     assert_eq!(g, 1);
-    assert_eq!(s.accounts(), ["gen-1"]);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
     // the item holds exactly the key, and the key is not all zero
     assert_eq!(get_generic_password(&s.0, "gen-1").unwrap(), k.as_bytes());
     assert_ne!(k.as_bytes(), &[0; 32]);
@@ -80,7 +82,7 @@ fn the_first_current_creates_generation_1_as_one_keychain_item() {
     assert_eq!((g2, g3), (1, 1));
     assert_eq!(k2.as_bytes(), k.as_bytes());
     assert_eq!(k3.as_bytes(), k.as_bytes());
-    assert_eq!(s.accounts(), ["gen-1"]);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
 }
 
 #[test]
@@ -90,7 +92,10 @@ fn rotate_adds_the_next_generation_and_keeps_the_old_key() {
     let (_, k1) = store.current().unwrap();
     assert_eq!(store.rotate().unwrap(), 2);
     assert_eq!(store.rotate().unwrap(), 3);
-    assert_eq!(s.accounts(), ["gen-1", "gen-2", "gen-3"]);
+    assert_eq!(
+        s.accounts(),
+        ["gen-1", "gen-2", "gen-3", "issued-1", "issued-2", "issued-3"]
+    );
     let (g, k3) = store.current().unwrap();
     assert_eq!(g, 3);
     assert_eq!(store.by_generation(1).unwrap().as_bytes(), k1.as_bytes());
@@ -105,7 +110,7 @@ fn rotate_on_an_empty_service_creates_generation_1() {
     let s = Service::new("rotate-empty");
     let store = MacosKeychainStore::new(&s.0);
     assert_eq!(store.rotate().unwrap(), 1);
-    assert_eq!(s.accounts(), ["gen-1"]);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
 }
 
 #[test]
@@ -126,7 +131,7 @@ fn unknown_and_zero_generations_are_unknown() {
         KeyProviderError::UnknownGeneration(2)
     );
     // reading does not create items
-    assert_eq!(s.accounts(), ["gen-1"]);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
 }
 
 #[test]
@@ -187,7 +192,7 @@ fn concurrent_first_use_agrees_on_one_key() {
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     assert!(keys.iter().all(|k| *k == keys[0]), "{keys:?}");
-    assert_eq!(s.accounts(), ["gen-1"]);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
 }
 
 #[test]
@@ -202,7 +207,7 @@ fn concurrent_rotations_each_get_their_own_generation() {
     });
     got.sort_unstable();
     assert_eq!(got, [2, 3, 4, 5, 6, 7]);
-    assert_eq!(s.accounts().len(), 7);
+    assert_eq!(s.accounts().len(), 14);
 }
 
 #[test]
@@ -214,4 +219,64 @@ fn the_store_is_a_shareable_key_provider_object() {
         .join()
         .unwrap();
     assert_eq!(g, 1);
+}
+
+#[test]
+fn a_removed_newest_generation_is_never_issued_again() {
+    // probe: rotate 1, rotate 2, remove gen-2 behind the store's back
+    let s = Service::new("removed-top");
+    let store = MacosKeychainStore::new(&s.0);
+    assert_eq!(store.rotate().unwrap(), 1);
+    let k1 = store.by_generation(1).unwrap();
+    assert_eq!(store.rotate().unwrap(), 2);
+    delete_generic_password(&s.0, "gen-2").unwrap();
+    // generation 2 existed: its key is gone, not unknown, and no other key is handed out for it
+    assert!(matches!(
+        store.by_generation(2),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
+    // current does not fall back to generation 1 silently
+    assert!(matches!(
+        store.current(),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
+    // the way forward is an explicit rotation, which skips the removed number
+    assert_eq!(store.rotate().unwrap(), 3);
+    assert_eq!(store.current().unwrap().0, 3);
+    assert!(matches!(
+        store.by_generation(2),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
+    assert_eq!(store.by_generation(1).unwrap().as_bytes(), k1.as_bytes());
+}
+
+#[test]
+fn a_key_item_without_its_marker_gets_the_marker_when_read() {
+    // a process stopped between writing the key item and its marker leaves the key alone; the
+    // next read records the marker, so removing the key afterwards cannot free the number
+    let s = Service::new("heal");
+    set_generic_password(&s.0, "gen-1", &[5; 32]).unwrap();
+    let store = MacosKeychainStore::new(&s.0);
+    assert_eq!(store.current().unwrap().0, 1);
+    assert_eq!(s.accounts(), ["gen-1", "issued-1"]);
+    delete_generic_password(&s.0, "gen-1").unwrap();
+    assert!(matches!(
+        store.current(),
+        Err(KeyProviderError::Irrecoverable(_))
+    ));
+    assert_eq!(store.rotate().unwrap(), 2);
+}
+
+#[test]
+fn removing_both_the_newest_key_and_its_marker_frees_the_number() {
+    // documented limit: the store keeps its record in the same keychain; a program that removes
+    // both items of the newest generation erases the record, and the number is issued again
+    let s = Service::new("removed-both");
+    let store = MacosKeychainStore::new(&s.0);
+    store.rotate().unwrap();
+    store.rotate().unwrap();
+    delete_generic_password(&s.0, "gen-2").unwrap();
+    delete_generic_password(&s.0, "issued-2").unwrap();
+    assert_eq!(store.current().unwrap().0, 1);
+    assert_eq!(store.rotate().unwrap(), 2);
 }
