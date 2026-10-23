@@ -10,7 +10,7 @@ An application seals its data at rest with a 32-byte key and does not store that
 | Android | Keystore through the same callback interface | not yet |
 | macOS | `desktop::MacosKeychainStore`: one generic password item per generation in the login keychain | implemented |
 | Windows | `desktop::WindowsDpapiStore`: one DPAPI-sealed file per generation in `%LOCALAPPDATA%\<service>` | implemented |
-| Linux | `desktop::LinuxSecretServiceStore` | not yet: every call fails fast (`todo!`) |
+| Linux | `desktop::LinuxSecretServiceStore`: one Secret Service item per generation (gnome-keyring, KWallet) | implemented |
 | tests, ephemeral data | `MemoryVault` | implemented (keys only in memory, nothing protected at rest) |
 
 ## Rust
@@ -56,6 +56,20 @@ let (generation, key) = store.current()?;                  // creates generation
 ```
 
 Each generation is one file `gen-<n>.dpapi` in `%LOCALAPPDATA%\<service>` (or a directory given with `in_dir`): the 32 key bytes sealed with DPAPI for the current user, bound to the directory's own name, so a file copied into another store's directory does not open there. A file is written under a temporary name and hard-linked to its final name, which fails when the name exists: a generation appears complete or not at all, and two processes creating it at once cannot both succeed. An empty marker file `issued-<n>` follows each key file, and the model (numbers never issued twice, a removed newest key is `Irrecoverable`, the same limit) is the macOS one. A file that does not open for this user (damaged, another user's, or sealed before an administrator reset the user's password) is `Irrecoverable`. `new` refuses a service name that is not one plain directory name (separators, `.` / `..`, reserved device names such as `NUL`). The plaintext DPAPI returns is zeroed before it is freed.
+
+### Linux Secret Service
+
+```rust,no_run
+# #[cfg(target_os = "linux")] {
+use alice_os_keystore::{desktop::LinuxSecretServiceStore, KeyProvider};
+
+let store = LinuxSecretServiceStore::new("com.example.app");
+let (generation, key) = store.current()?;                  // creates generation 1 on first use
+# }
+# Ok::<(), alice_os_keystore::KeyProviderError>(())
+```
+
+Each generation is one item in the default collection of the Secret Service (gnome-keyring, KWallet) with the attributes `keystore-service` and `keystore-generation`, holding the 32 key bytes, followed by a marker item (`keystore-issued`); the connection to the service encrypts the secrets (Diffie-Hellman). The model is the macOS one (numbers never issued twice, a removed newest key is `Irrecoverable`, the same limit), with one difference the Secret Service forces: it has no "create unless it exists", so two processes creating the same generation at once leave two items. Every reader then picks the same one, by what only the service sets: the earliest `Created`, ties broken by the object path. A creator re-reads after creating and uses its own key only when its item was chosen, otherwise the chosen item's key. The other items stay in place, are logged (`log::warn!`, no key material) and counted by `duplicate_count`. Without a session bus (a headless machine), with a locked keyring that cannot be unlocked, or without a default collection, every call is `Unavailable`, so the caller can fall back to a passphrase.
 
 ### Reading a secret from a terminal
 
@@ -116,7 +130,8 @@ extension SecureEnclaveVault: ForeignKeyVault {
 
 - `tools/uniffi-bindgen` (build-time only) has its own lock; its audit runs as an informational job (its basic-toml advisory is known). The library's `Cargo.lock` also lists basic-toml because uniffi 0.28 records its optional generator dependency; it is not built into the library (cargo-deny, which resolves features, does not report it) and the audit ignores it with an exit condition in `security-audit.yml`
 
-- Desktop key store for Linux (Secret Service)
+- Linux Secret Service store: run only on the CI Linux runner (gnome-keyring in a private D-Bus bus); KWallet is not tested
+- Three advisories are held on a date (`scripts/advisory_holds.toml`): zvariant / zbus_names / zvariant_derive are unmaintained as separate crates and come from zbus 5 through secret-service 5.2; the hold ends when secret-service moves to zbus 6 (or another maintained client with the encrypted session is used)
 - Windows DPAPI store: run only on the CI Windows runner; that a file does not open for another Windows user is DPAPI's documented behaviour and not tested here (CI has one user)
 - macOS Keychain: the retry in `current` when an item disappears between listing and reading is not exercised by a test (it needs another process deleting at that moment), and that the buffer returned by the Security framework is zeroed is not observable from a test
 - Android Keystore

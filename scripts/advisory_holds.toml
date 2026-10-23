@@ -1,0 +1,55 @@
+# Dated holds on RustSec advisories that cannot be fixed without a dependency
+# upgrade. Each hold names the advisory, the crate version it applies to and the
+# packages that depend on that version, and ends on `expires`.
+#
+# The advisory id is ignored in deny.toml (and, for vulnerabilities, in
+# .cargo/audit.toml, which cargo audit reads). scripts/advisory_hold_guard.py keeps
+# every ignore exact: it fails when the held version leaves Cargo.lock, when the
+# version gains or loses a dependent, when another version of the crate is
+# affected, when the hold has expired, or when the ignore lists and the holds
+# disagree. Every other advisory still fails the cargo deny / cargo audit steps.
+#
+# kind: "vulnerability" (ignored in deny.toml and .cargo/audit.toml) or
+#       "unmaintained" (deny.toml only; cargo audit reports it as a warning)
+# dependents: the packages that depend on the held version directly. Only direct
+#        dependents are compared: a new consumer of a recorded dependent reaches the
+#        held version through the same code and passes.
+# fixed: the advisory's patched ranges, copied as published (comma-separated
+#        comparators, semver precedence). Other versions of the crate in Cargo.lock
+#        must match one of them; a pre-release matches only a range that names a
+#        pre-release of the same release. Empty when no version is safe: then every
+#        version in Cargo.lock must be held.
+
+# zvariant / zbus_names / zvariant_derive are no longer published as separate crates
+# (merged into zbus 6). They come from zbus 5.19, which secret-service 5.2 (the Linux
+# Secret Service client, with the encrypted Diffie-Hellman session) uses; no
+# secret-service release is on zbus 6 yet. No version of these crates is safe. Linux only.
+[[hold]]
+id = "RUSTSEC-2026-0370"
+kind = "unmaintained"
+crate = "zvariant"
+version = "5.15.1"
+dependents = ["zbus 5.19.0", "zbus_macros 5.19.0", "zbus_names 4.3.5"]
+fixed = []
+expires = "2027-01-31"
+until = "secret-service on zbus 6, or another maintained client with the encrypted session"
+
+[[hold]]
+id = "RUSTSEC-2026-0371"
+kind = "unmaintained"
+crate = "zbus_names"
+version = "4.3.5"
+dependents = ["zbus 5.19.0", "zbus_macros 5.19.0"]
+fixed = []
+expires = "2027-01-31"
+until = "secret-service on zbus 6, or another maintained client with the encrypted session"
+
+[[hold]]
+id = "RUSTSEC-2026-0372"
+kind = "unmaintained"
+crate = "zvariant_derive"
+version = "5.15.1"
+dependents = ["zvariant 5.15.1"]
+fixed = []
+expires = "2027-01-31"
+until = "secret-service on zbus 6, or another maintained client with the encrypted session"

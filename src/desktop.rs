@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `MacosKeychainStore` (macOS only) | implemented: login keychain, one generic password item per generation |
 //! | `WindowsDpapiStore` (Windows only) | implemented: one DPAPI-sealed file per generation under `%LOCALAPPDATA%` |
-//! | [`LinuxSecretServiceStore`] | not implemented: every call fails fast (`todo!`) |
+//! | `LinuxSecretServiceStore` (Linux only) | implemented: one Secret Service item per generation (duplicates from racing creators resolve to one) |
 //!
 //! The implemented stores share one model: one 32-byte random key per generation, each
 //! one item in the operating system's store, created once and never rewritten, and for
@@ -12,7 +12,7 @@
 //! item. The highest issued generation is the highest of keys and markers, and a number
 //! is never issued twice: `rotate` takes the next number above it, even when the key item
 //! of the newest generation was removed. `current` returns the newest generation; when
-//! its key item was removed it reports [`KeyProviderError::Irrecoverable`] instead of
+//! its key item was removed it reports [`crate::KeyProviderError::Irrecoverable`] instead of
 //! falling back to an older key (`rotate` is the explicit way on). `by_generation`
 //! reports a missing key at or below the highest issued generation as `Irrecoverable`
 //! and above it as `UnknownGeneration`. A key item found without its marker (a process
@@ -21,10 +21,9 @@
 //! Limit: the markers live in the same store as the keys. A program that removes both the
 //! newest key item and its marker erases the record, and that number is issued again.
 //!
-//! A store that is not implemented never hands out a key or reports success, so a
-//! desktop build never silently runs without a protected key.
 
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use crate::{Key, KeyGeneration, KeyProviderError};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -36,28 +35,21 @@ mod windows;
 #[cfg(windows)]
 pub use windows::WindowsDpapiStore;
 
-/// Linux Secret Service (not implemented)
-pub struct LinuxSecretServiceStore;
-
-impl KeyProvider for LinuxSecretServiceStore {
-    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
-        todo!("Linux Secret Service store not implemented")
-    }
-    fn by_generation(&self, _generation: KeyGeneration) -> Result<Key, KeyProviderError> {
-        todo!("Linux Secret Service store not implemented")
-    }
-}
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::LinuxSecretServiceStore;
 
 /// What one store holds for a service: the generations with a key item, and the
 /// generations marked as issued (each a canonical number; other names are left out)
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 #[derive(Default)]
 struct Inventory {
     keys: std::collections::BTreeSet<KeyGeneration>,
     issued: std::collections::BTreeSet<KeyGeneration>,
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 impl Inventory {
     /// The highest generation ever issued (key or marker)
     fn high_water(&self) -> Option<KeyGeneration> {
@@ -66,7 +58,7 @@ impl Inventory {
 }
 
 /// One operating system store holding one key item and one marker per generation
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 trait GenerationItems {
     /// The key items and markers present
     fn inventory(&self) -> Result<Inventory, KeyProviderError>;
@@ -80,16 +72,16 @@ trait GenerationItems {
 
 /// How often one call re-reads the items when another process changed them meanwhile
 /// (each retry follows an item someone else added or removed)
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 const ATTEMPTS: usize = 64;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 const CHANGING: KeyProviderError =
     KeyProviderError::Unavailable("the stored items kept changing during the call");
 
 /// The generation a name `<prefix><n><suffix>` stands for (`n` decimal without a leading
 /// zero, at least 1), `None` for any other name
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration> {
     let digits = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
     if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -98,13 +90,13 @@ fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration
     digits.parse().ok()
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn fresh_key() -> Result<Key, KeyProviderError> {
     Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))
 }
 
 /// Read `generation`'s key, recording its marker when the key item has none
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn read_marked<S: GenerationItems>(
     s: &S,
     inv: &Inventory,
@@ -117,7 +109,7 @@ fn read_marked<S: GenerationItems>(
     Ok(key)
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProviderError> {
     for _ in 0..ATTEMPTS {
         let inv = s.inventory()?;
@@ -142,7 +134,7 @@ fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProv
     Err(CHANGING)
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderError> {
     for _ in 0..ATTEMPTS {
         let next = match s.inventory()?.high_water() {
@@ -159,7 +151,7 @@ fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderErro
     Err(CHANGING)
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn by_generation_of<S: GenerationItems>(
     s: &S,
     generation: KeyGeneration,
