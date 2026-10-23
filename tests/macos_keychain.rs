@@ -113,16 +113,16 @@ fn unknown_and_zero_generations_are_unknown() {
     let s = Service::new("unknown");
     let store = MacosKeychainStore::new(&s.0);
     assert_eq!(
-        store.by_generation(1).unwrap_err(),
+        store.by_generation(1).err().expect("an error"),
         KeyProviderError::UnknownGeneration(1)
     );
     store.current().unwrap();
     assert_eq!(
-        store.by_generation(0).unwrap_err(),
+        store.by_generation(0).err().expect("an error"),
         KeyProviderError::UnknownGeneration(0)
     );
     assert_eq!(
-        store.by_generation(2).unwrap_err(),
+        store.by_generation(2).err().expect("an error"),
         KeyProviderError::UnknownGeneration(2)
     );
     // reading does not create items

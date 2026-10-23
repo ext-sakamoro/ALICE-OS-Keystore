@@ -25,7 +25,7 @@ fn by_generation_returns_the_stored_key_and_rejects_others() {
     v.insert(7, Key::from_bytes([7; 32]));
     assert_eq!(v.by_generation(7).unwrap().as_bytes(), &[7; 32]);
     assert_eq!(
-        v.by_generation(8).unwrap_err(),
+        v.by_generation(8).err().expect("an error"),
         KeyProviderError::UnknownGeneration(8)
     );
 }
@@ -35,9 +35,15 @@ fn generation_zero_is_never_a_key() {
     let v = MemoryVault::new();
     v.insert(1, Key::from_bytes([1; 32]));
     assert_eq!(
-        v.by_generation(0).unwrap_err(),
+        v.by_generation(0).err().expect("an error"),
         KeyProviderError::UnknownGeneration(0)
     );
+}
+
+#[test]
+#[should_panic(expected = "generation 0 is never a key")]
+fn generation_zero_cannot_be_stored() {
+    MemoryVault::new().insert(0, Key::from_bytes([1; 32]));
 }
 
 #[test]
@@ -82,7 +88,7 @@ fn retire_removes_a_generation() {
     v.insert(2, Key::from_bytes([2; 32]));
     v.retire(1);
     assert_eq!(
-        v.by_generation(1).unwrap_err(),
+        v.by_generation(1).err().expect("an error"),
         KeyProviderError::UnknownGeneration(1)
     );
     assert_eq!(v.current().unwrap().0, 2);

@@ -19,8 +19,6 @@ uniffi = ["dep:uniffi"]
 # the key type (zeroed on drop) and the KeyProvider trait the stores implement; used under the
 # commercial license of the dual license
 alice-crypto = { git = "https://github.com/ext-sakamoro/ALICE-Crypto", rev = "878cf866e524b9f53099c8cdf6a8333e641fb39f", version = "0.6" }
-# OS entropy for MemoryVault::generate
-getrandom = "0.2"
 # zeroing the bytes the OS store returns before they are dropped
 zeroize = "1"
 uniffi = { version = "=0.28.3", optional = true }

@@ -31,7 +31,6 @@ version = "0.2.0"
 dependencies = [
  "alice-crypto",
  "core-foundation",
- "getrandom",
  "rustix",
  "security-framework",
  "uniffi",
