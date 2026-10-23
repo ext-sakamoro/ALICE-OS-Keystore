@@ -28,10 +28,29 @@ mod pty {
     use super::*;
     use rustix::fs::{Mode, OFlags};
     use rustix::pty::{grantpt, openpt, ptsname, unlockpt, OpenptFlags};
-    use rustix::termios::{tcgetattr, LocalModes};
+    use rustix::termios::{tcgetattr, tcsetattr, InputModes, LocalModes, OptionalActions};
     use std::io::Write;
     use std::os::fd::OwnedFd;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    type Read = Result<zeroize::Zeroizing<String>, PromptError>;
+
+    /// Runs the reader on `terminal` in a thread; the result arrives on the channel (a reader
+    /// that never returns shows up as a timeout instead of a hung test)
+    fn spawn_reader(terminal: OwnedFd) -> mpsc::Receiver<Read> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let r = read_secret_from(&terminal, &mut Vec::new(), "> ");
+            let _ = tx.send(r);
+        });
+        rx
+    }
+
+    fn result(rx: &mpsc::Receiver<Read>) -> Read {
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("the reader did not return within 10 s")
+    }
 
     /// A connected pair: the controller side the test writes to, and the
     /// terminal side the reader reads from.
@@ -138,5 +157,105 @@ mod pty {
             echo_on(&watched),
             "echo was not restored after a refused line"
         );
+    }
+
+    /// Enter sends a carriage return; a terminal whose mode does not translate it (ICRNL
+    /// cleared, e.g. left so by another program) still ends the line, and the mode the reader
+    /// found is the mode it leaves
+    #[test]
+    fn a_carriage_return_ends_the_line_when_the_terminal_does_not_translate_it() {
+        let (mut controller, terminal) = pair();
+        let mut mode = tcgetattr(&terminal).unwrap();
+        mode.input_modes.remove(InputModes::ICRNL);
+        tcsetattr(&terminal, OptionalActions::Now, &mode).unwrap();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all(b"abc\r").unwrap();
+        assert_eq!(result(&rx).unwrap().as_str(), "abc");
+        let after = tcgetattr(&watched).unwrap();
+        assert!(
+            after.local_modes.contains(LocalModes::ECHO),
+            "echo was not restored"
+        );
+        assert!(
+            !after.input_modes.contains(InputModes::ICRNL),
+            "the reader did not restore the mode it found"
+        );
+    }
+
+    /// The same in a terminal left in non-canonical mode (no line editing)
+    #[test]
+    fn a_carriage_return_ends_the_line_in_a_non_canonical_terminal() {
+        let (mut controller, terminal) = pair();
+        let mut mode = tcgetattr(&terminal).unwrap();
+        mode.input_modes.remove(InputModes::ICRNL);
+        mode.local_modes.remove(LocalModes::ICANON);
+        tcsetattr(&terminal, OptionalActions::Now, &mode).unwrap();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all(b"xyz\r").unwrap();
+        assert_eq!(result(&rx).unwrap().as_str(), "xyz");
+        let after = tcgetattr(&watched).unwrap();
+        assert!(
+            after.local_modes.contains(LocalModes::ECHO),
+            "echo was not restored"
+        );
+        assert!(
+            !after.local_modes.contains(LocalModes::ICANON),
+            "the reader did not restore the mode it found"
+        );
+    }
+
+    #[test]
+    fn a_non_ascii_secret_is_read_as_typed() {
+        let (mut controller, terminal) = pair();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all("pässwörd 秘密\n".as_bytes()).unwrap();
+        assert_eq!(result(&rx).unwrap().as_str(), "pässwörd 秘密");
+    }
+
+    #[test]
+    fn a_line_that_is_not_utf8_is_refused_and_echo_is_restored() {
+        let (mut controller, terminal) = pair();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all(b"ab\xff\xfecd\n").unwrap();
+        let r = result(&rx);
+        assert!(matches!(r, Err(PromptError::NotUtf8)), "{r:?}");
+        assert!(
+            echo_on(&watched),
+            "echo was not restored after a line that is not UTF-8"
+        );
+    }
+
+    /// A prompt output that panics (after echo was turned off): the panic unwinds through the
+    /// reader and the mode is restored on the way
+    #[test]
+    fn a_panic_inside_the_reader_restores_echo() {
+        /// Panics on the prompt, after recording that echo was off at that moment
+        struct Panics(OwnedFd, bool);
+        impl Write for Panics {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                self.1 = !echo_on(&self.0);
+                panic!("injected");
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (_controller, terminal) = pair();
+        assert!(echo_on(&terminal));
+        let mut out = Panics(terminal.try_clone().unwrap(), false);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_secret_from(&terminal, &mut out, "> ")
+        }));
+        assert!(r.is_err(), "the injected panic did not happen");
+        assert!(out.1, "echo was not off when the panic happened");
+        assert!(echo_on(&terminal), "echo was not restored after a panic");
     }
 }
