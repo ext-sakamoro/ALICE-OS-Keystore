@@ -18,7 +18,7 @@ uniffi = ["dep:uniffi"]
 [dependencies]
 # the key type (zeroed on drop) and the KeyProvider trait the stores implement; used under the
 # commercial license of the dual license
-alice-crypto = { git = "https://github.com/ext-sakamoro/ALICE-Crypto", rev = "878cf866e524b9f53099c8cdf6a8333e641fb39f", version = "0.6" }
+alice-crypto = { git = "https://github.com/ext-sakamoro/ALICE-Crypto", rev = "eefb7bab69b82f334bf5c86138bed1e19125a570", version = "0.6" }
 # zeroing the bytes the OS store returns before they are dropped
 zeroize = "1"
 # warnings about stored duplicates (the Linux store); no output unless the application installs a logger

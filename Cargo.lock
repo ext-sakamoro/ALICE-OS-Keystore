@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "alice-crypto"
 version = "0.6.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?rev=878cf866e524b9f53099c8cdf6a8333e641fb39f#878cf866e524b9f53099c8cdf6a8333e641fb39f"
+source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?rev=eefb7bab69b82f334bf5c86138bed1e19125a570#eefb7bab69b82f334bf5c86138bed1e19125a570"
 dependencies = [
  "argon2",
  "blake3",
