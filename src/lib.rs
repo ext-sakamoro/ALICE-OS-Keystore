@@ -10,7 +10,8 @@
 //! | macOS | `desktop::MacosKeychainStore` (macOS only): one generic password item per generation in the login keychain | implemented |
 //! | iOS / iPadOS / visionOS | Swift `SecureEnclaveVault` (`apple/`): a Secure Enclave P-256 key wraps the DEK with ECIES, the wrapped blob lives in the Keychain (this device only) | implemented in Swift, reaches Rust through [`ffi::ForeignKeyVault`] |
 //! | Android | Keystore (Kotlin) through [`ffi::ForeignKeyVault`] | not yet |
-//! | Windows / Linux | [`desktop`] | not yet: fails fast |
+//! | Windows | `desktop::WindowsDpapiStore` (Windows only): one DPAPI-sealed file per generation under `%LOCALAPPDATA%` | implemented |
+//! | Linux | [`desktop`] | not yet: fails fast |
 //! | tests, ephemeral use | [`MemoryVault`] | implemented (keys only in memory) |
 //!
 //! Keys have a *generation* ([`KeyGeneration`], starting at 1; 0 is never a key): data
@@ -40,7 +41,8 @@
 //! # Unsafe code
 //!
 //! `unsafe` code is allowed only in the private `sys` module, which holds the
-//! operating system calls this crate makes itself (today the Windows console mode).
+//! operating system calls this crate makes itself (today the Windows console mode and
+//! DPAPI).
 //! Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies
 //! `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI) fails on any
 //! `unsafe` outside `src/sys/`. The macOS Keychain is reached through the
