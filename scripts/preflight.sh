@@ -255,6 +255,8 @@ has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 #   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, needs network / runner-only)
 #   - security-audit.yml:tools-audit:Run cargo audit on the tool's lock (continue-on-error, no count guard for cargo audit)
 #   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
+#   - security-audit.yml:coverage:Install gnome-keyring (a real Secret Service for the key store tests) (no cargo / grep)
+#   - security-audit.yml:coverage:Run coverage (needs network / runner-only)
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_key_bytes] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_key_bytes] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (runner-only (open-ended or unprovable-bounded fuzz run))
@@ -459,25 +461,5 @@ step "security-audit.yml / audit: Run cargo audit"
 
 step "security-audit.yml / tools-audit: Run cargo audit on the tool's lock"
 echo 'PREFLIGHT-SKIP: security-audit.yml / tools-audit: Run cargo audit on the tool'"'"'s lock: continue-on-error, no count guard for cargo audit' >&2
-
-step "security-audit.yml / coverage: Run coverage"
-(
-  log="$(mktemp)"
-  set +e
-  {
-    (
-      export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
-      set -o pipefail
-      cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
-        | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 < 85) { print "line coverage below the 85% floor: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
-    )
-  } 2>&1 | tee "${log}"
-  rc=${PIPESTATUS[0]}
-  n=$(sed $'s/\033\[[0-9;]*m//g' "${log}" | awk '$1 == "TOTAL" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {n = $2 - $3} END {print n + 0}')
-  rm -f "${log}"
-  set -e
-  if [ -z "${n}" ] || [ "${n}" -eq 0 ]; then echo 'security-audit.yml / coverage: Run coverage: cargo-llvm-cov compared nothing (continue-on-error in CI; a run with no count fails)' >&2; exit 1; fi
-  echo 'PREFLIGHT-INFO: security-audit.yml / coverage: Run coverage: continue-on-error in CI, '"exit ${rc}, ${n} compared" >&2
-)
 
 echo; echo "preflight OK"
