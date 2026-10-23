@@ -33,7 +33,7 @@ security-framework = "3.7"
 core-foundation = "0.10"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 # the prompt tests drive the reader through a pseudo-terminal
 # the macOS Keychain tests read and remove items behind the store's back
