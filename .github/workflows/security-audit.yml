@@ -274,11 +274,11 @@ jobs:
       # they run against gnome-keyring in a private D-Bus session as in the test job, and every
       # named binary must pass its count (scripts/run_tests.sh), so a store whose tests fail or
       # do not run fails here too; a summary without TOTAL, or with line coverage under the
-      # floor, fails the step; the floor is the measured 92.79% less a margin
+      # floor, fails the step; the floor is the measured 89.54% (with the Linux store) less a margin
       - name: Run coverage
         run: |
           set -o pipefail
-          if [ "$(uname -s)" = Linux ]; then os_store="exchange=6,linux_secret_service=13,linux_headless=1"; else os_store="exchange=5,macos_keychain=16"; fi
+          if [ "$(uname -s)" = Linux ]; then os_store="exchange=6,linux_secret_service=13,linux_headless=1"; else os_store="exchange=5,macos_keychain=18"; fi
           scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,read_secret=12,"$os_store" -- cargo llvm-cov --all-features --summary-only 2>&1 | tee coverage-summary.txt \
             | awk '{ print } $1 == "TOTAL" { found = 1; if ($10 + 0 < 85) { print "line coverage below the 85% floor: " $0; bad = 1 } } END { if (!found) { print "no TOTAL line"; bad = 1 } exit bad }'
 

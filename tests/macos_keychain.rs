@@ -11,10 +11,13 @@
 //! item does not hold 32 bytes).
 //!
 //! Each test uses its own service name (`alice-os-keystore-test.<test>.<pid>.<nanos>`) and deletes
-//! its items at the end, also when it panics. A run that is killed cannot clean up, so the first
-//! test of every run sweeps items under that prefix whose time stamp is older than `STALE` (and
-//! never any other service name). The items are read and removed behind the store's back with
-//! Security.framework directly, as another program would.
+//! its items at the end, also when it panics. A run that is killed cannot clean up, so each run
+//! writes the service names it creates to a manifest file before creating them, and the first
+//! test of every run sweeps the services listed in other runs' manifests whose time stamp is older
+//! than `STALE` (and never any other service name). The sweep looks each listed service up by
+//! name: a keychain-wide search can miss items another process added just before. The items are
+//! read and removed behind the store's back with Security.framework directly, as another program
+//! would.
 #![cfg(target_os = "macos")]
 
 use alice_crypto::{KeyProvider, KeyProviderError};
@@ -36,26 +39,16 @@ fn now_nanos() -> u128 {
         .as_nanos()
 }
 
-/// (service, account) of every generic password item whose service starts with `prefix`
-fn items_under(prefix: &str) -> Vec<(String, String)> {
-    let found = ItemSearchOptions::new()
+/// A keychain-wide search (no service), its result and any error thrown away. Only
+/// `a_marker_added_after_another_threads_search_still_counts` runs it, as the interference that
+/// test is about; it can fail or miss items while other tests add and delete theirs, so nothing
+/// relies on what it finds, and the sweep never searches this way
+fn wide_search() {
+    let _ = ItemSearchOptions::new()
         .class(ItemClass::generic_password())
         .load_attributes(true)
         .limit(Limit::All)
         .search();
-    match found {
-        Ok(items) => items
-            .iter()
-            .filter_map(|r| {
-                let d = r.simplify_dict()?;
-                let svce = d.get("svce")?;
-                svce.starts_with(prefix)
-                    .then(|| (svce.clone(), d.get("acct").cloned().unwrap_or_default()))
-            })
-            .collect(),
-        Err(e) if e.code() == -25300 => Vec::new(), // errSecItemNotFound
-        Err(e) => panic!("keychain search failed: {e}"),
-    }
 }
 
 /// The services among `names` that belong to a test run older than `max_age` at `now`
@@ -85,29 +78,102 @@ fn select_stale(names: &[String], now: u128, max_age: std::time::Duration) -> Ve
         .collect()
 }
 
-/// Remove the items of test runs older than `max_age` (see `select_stale`); returns how many.
-/// It lists the keychain with a search that has no service, which in this process may not show
-/// items added after another thread's search of the same kind: in use the stale items come from
-/// earlier processes, and the test of this function runs it in a child process.
-fn sweep_stale(now: u128, max_age: std::time::Duration) -> usize {
-    let items = items_under(PREFIX);
-    let names: Vec<String> = items.iter().map(|(s, _)| s.clone()).collect();
-    let stale = select_stale(&names, now, max_age);
-    items
-        .iter()
-        .filter(|(s, _)| stale.contains(s))
-        .filter(|(s, a)| delete_generic_password(s, a).is_ok())
-        .count()
+/// The accounts the keychain holds under `service`, sorted (a search filtered by the service)
+fn accounts_of(service: &str) -> Vec<String> {
+    let found = ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .service(service)
+        .load_attributes(true)
+        .limit(Limit::All)
+        .search();
+    let mut accounts: Vec<String> = match found {
+        Ok(items) => items
+            .iter()
+            .filter_map(|r| r.simplify_dict()?.get("acct").cloned())
+            .collect(),
+        Err(e) if e.code() == -25300 => Vec::new(), // errSecItemNotFound
+        Err(e) => panic!("keychain search failed: {e}"),
+    };
+    accounts.sort();
+    accounts
 }
 
-/// Remove the items of every test service named in a run manifest older than `max_age`
-fn sweep_manifests(dir: &std::path::Path, now: u128, max_age: std::time::Duration) -> usize {
-    todo!("manifest sweep {dir:?} {now} {max_age:?}")
+/// The directory of the run manifests: one file per test run, named like a test service
+/// (`alice-os-keystore-test.run.<pid>.<nanos>`), one service name per line
+fn manifest_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("keystore-test-runs")
 }
+
+static RUN_MANIFEST: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// This run's manifest of the test services it creates
 fn run_manifest() -> std::path::PathBuf {
-    todo!("run manifest")
+    RUN_MANIFEST
+        .get_or_init(|| {
+            let root = manifest_root();
+            std::fs::create_dir_all(&root).unwrap();
+            root.join(format!(
+                "{PREFIX}run.{}.{}",
+                std::process::id(),
+                now_nanos()
+            ))
+        })
+        .clone()
+}
+
+static RECORD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Append `service` to this run's manifest (written through before any item of it exists). The
+/// tests run on several threads: one write of the whole line, under a lock, so lines never mix
+fn record(service: &str) {
+    use std::io::Write;
+    let _guard = RECORD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run_manifest())
+        .unwrap();
+    f.write_all(format!("{service}\n").as_bytes()).unwrap();
+    f.sync_all().unwrap();
+}
+
+/// Remove the items of every test service named in a manifest under `dir` whose own time stamp
+/// is older than `max_age` (see `select_stale`), each looked up by its service; a manifest whose
+/// test services are all stale is removed too. Lines outside the test prefix are never touched.
+/// Returns how many items were removed; a missing or empty directory removes nothing.
+fn sweep_manifests(dir: &std::path::Path, now: u128, max_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let own = RUN_MANIFEST.get().cloned();
+    let mut removed = 0;
+    for path in entries.filter_map(|e| Some(e.ok()?.path())) {
+        if Some(&path) == own.as_ref() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let listed: Vec<String> = text
+            .lines()
+            .filter(|l| l.starts_with(PREFIX))
+            .map(str::to_owned)
+            .collect();
+        let stale = select_stale(&listed, now, max_age);
+        for service in &stale {
+            for account in accounts_of(service) {
+                if delete_generic_password(service, &account).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+        if stale.len() == listed.len() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    removed
 }
 
 static SWEEP: std::sync::Once = std::sync::Once::new();
@@ -118,33 +184,16 @@ struct Service(String);
 impl Service {
     fn new(test: &str) -> Self {
         SWEEP.call_once(|| {
-            sweep_stale(now_nanos(), STALE);
+            sweep_manifests(&manifest_root(), now_nanos(), STALE);
         });
-        Self(format!(
-            "{PREFIX}{test}.{}.{}",
-            std::process::id(),
-            now_nanos()
-        ))
+        let name = format!("{PREFIX}{test}.{}.{}", std::process::id(), now_nanos());
+        record(&name);
+        Self(name)
     }
 
     /// The accounts the keychain holds under this service, sorted
     fn accounts(&self) -> Vec<String> {
-        let found = ItemSearchOptions::new()
-            .class(ItemClass::generic_password())
-            .service(&self.0)
-            .load_attributes(true)
-            .limit(Limit::All)
-            .search();
-        let mut accounts: Vec<String> = match found {
-            Ok(items) => items
-                .iter()
-                .filter_map(|r| r.simplify_dict()?.get("acct").cloned())
-                .collect(),
-            Err(e) if e.code() == -25300 => Vec::new(), // errSecItemNotFound
-            Err(e) => panic!("keychain search failed: {e}"),
-        };
-        accounts.sort();
-        accounts
+        accounts_of(&self.0)
     }
 }
 
@@ -484,14 +533,14 @@ fn a_marker_added_after_another_threads_search_still_counts() {
     let store = MacosKeychainStore::new(&s.0);
     for round in 1..=5u32 {
         std::thread::spawn(|| {
-            let _ = items_under(PREFIX);
+            wide_search();
         })
         .join()
         .unwrap();
         assert_eq!(store.rotate().unwrap(), round * 2 - 1);
         delete_generic_password(&s.0, &format!("gen-{}", round * 2 - 1)).unwrap();
         std::thread::spawn(|| {
-            let _ = items_under(PREFIX);
+            wide_search();
         })
         .join()
         .unwrap();
