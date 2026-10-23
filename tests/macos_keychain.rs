@@ -100,6 +100,16 @@ fn sweep_stale(now: u128, max_age: std::time::Duration) -> usize {
         .count()
 }
 
+/// Remove the items of every test service named in a run manifest older than `max_age`
+fn sweep_manifests(dir: &std::path::Path, now: u128, max_age: std::time::Duration) -> usize {
+    todo!("manifest sweep {dir:?} {now} {max_age:?}")
+}
+
+/// This run's manifest of the test services it creates
+fn run_manifest() -> std::path::PathBuf {
+    todo!("run manifest")
+}
+
 static SWEEP: std::sync::Once = std::sync::Once::new();
 
 /// A service name no other test or program uses; its items are deleted on drop
@@ -387,47 +397,82 @@ fn select_stale_takes_only_old_test_runs() {
     assert!(select_stale(&[], now, STALE).is_empty());
 }
 
-/// Run by `the_sweep_removes_items_of_a_killed_run_and_keeps_a_live_one` in a child process
-#[test]
-#[ignore = "run in a child process by the_sweep_removes_items_of_a_killed_run_and_keeps_a_live_one"]
-fn sweep_child() {
-    assert_eq!(
-        std::env::var("ALICE_KEYSTORE_SWEEP_CHILD").as_deref(),
-        Ok("1"),
-        "run only through the parent test"
-    );
-    sweep_stale(now_nanos(), STALE);
+/// A manifest directory of its own for one sweep test (the real runs' manifests stay apart)
+fn manifest_dir(test: &str) -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "keystore-sweep-{test}-{}-{}",
+        std::process::id(),
+        now_nanos()
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
 }
 
 #[test]
-fn the_sweep_removes_items_of_a_killed_run_and_keeps_a_live_one() {
-    // fixtures stamped from the real clock under this run's own test name; the sweep runs in a
-    // new process, as the next run of the suite would
+fn the_sweep_removes_the_services_of_a_stale_run_manifest_and_keeps_a_live_one() {
+    // a killed run left a manifest naming its services; the sweep finds those items by their
+    // service only (no keychain-wide search), deletes them and the manifest, and leaves a live
+    // run, an unlisted service and a listed name outside the test prefix alone
     let min = 60 * 1_000_000_000u128;
     let now = now_nanos();
-    let run = format!("sweep{}x{now}", std::process::id());
-    let old = format!("{PREFIX}{run}.1.{}", now - 31 * min);
-    let live = format!("{PREFIX}{run}.1.{now}");
-    let other = format!("x-{PREFIX}{run}.1.{}", now - 31 * min);
-    for s in [&old, &live, &other] {
-        set_generic_password(s, "gen-1", &[1; 32]).unwrap();
+    let dir = manifest_dir("stale");
+    let tag = format!("sweep{}x{now}", std::process::id());
+    let old_run = format!("{PREFIX}run.{}.{}", std::process::id(), now - 31 * min);
+    let live_run = format!("{PREFIX}run.{}.{now}", std::process::id());
+    let old = format!("{PREFIX}{tag}-old.1.{}", now - 31 * min);
+    let live = format!("{PREFIX}{tag}-live.1.{now}");
+    let unlisted = format!("{PREFIX}{tag}-unlisted.1.{}", now - 31 * min);
+    let outside = format!("x-{PREFIX}{tag}-outside.1.{}", now - 31 * min);
+    for s in [&old, &live, &unlisted, &outside] {
+        for account in ["gen-1", "issued-1"] {
+            set_generic_password(s, account, &[1; 32]).unwrap();
+        }
     }
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "sweep_child", "--test-threads=1"])
-        .env("ALICE_KEYSTORE_SWEEP_CHILD", "1")
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let gone = get_generic_password(&old, "gen-1").is_err();
-    let kept = get_generic_password(&live, "gen-1").is_ok();
-    let other_kept = get_generic_password(&other, "gen-1").is_ok();
-    for s in [&old, &live, &other] {
-        let _ = delete_generic_password(s, "gen-1");
+    std::fs::write(dir.join(&old_run), format!("{old}\n{outside}\n")).unwrap();
+    std::fs::write(dir.join(&live_run), format!("{live}\n")).unwrap();
+    let removed = sweep_manifests(&dir, now, STALE);
+    let gone = get_generic_password(&old, "gen-1").is_err()
+        && get_generic_password(&old, "issued-1").is_err();
+    let kept = |s: &str| {
+        get_generic_password(s, "gen-1").is_ok() && get_generic_password(s, "issued-1").is_ok()
+    };
+    let (live_kept, unlisted_kept, outside_kept) = (kept(&live), kept(&unlisted), kept(&outside));
+    for s in [&old, &live, &unlisted, &outside] {
+        for account in ["gen-1", "issued-1"] {
+            let _ = delete_generic_password(s, account);
+        }
     }
-    assert!(out.status.success() && text.contains("1 passed"), "{text}");
-    assert!(gone, "the stale item was not swept");
-    assert!(kept, "a live item was swept");
-    assert!(other_kept, "a service outside the test prefix was swept");
+    let old_manifest_gone = !dir.join(&old_run).exists();
+    let live_manifest_kept = dir.join(&live_run).exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(gone, "the stale run's items were not swept");
+    assert_eq!(
+        removed, 2,
+        "two items (gen-1 and issued-1) of the stale run's one test service"
+    );
+    assert!(live_kept, "a live run's item was swept");
+    assert!(unlisted_kept, "a service no manifest names was swept");
+    assert!(
+        outside_kept,
+        "a listed name outside the test prefix was swept"
+    );
+    assert!(old_manifest_gone, "the stale manifest was kept");
+    assert!(live_manifest_kept, "a live run's manifest was removed");
+}
+
+#[test]
+fn the_sweep_of_an_empty_or_missing_manifest_directory_removes_nothing() {
+    let dir = manifest_dir("empty");
+    assert_eq!(sweep_manifests(&dir, now_nanos(), STALE), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(sweep_manifests(&dir, now_nanos(), STALE), 0);
+}
+
+#[test]
+fn a_service_is_recorded_in_this_runs_manifest_before_it_is_used() {
+    let s = Service::new("manifest");
+    let listed = std::fs::read_to_string(run_manifest()).unwrap();
+    assert!(listed.lines().any(|l| l == s.0), "{} not in {listed}", s.0);
 }
 
 #[test]
