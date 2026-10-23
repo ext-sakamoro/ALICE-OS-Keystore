@@ -416,14 +416,14 @@ fi
 step "ci.yml / test: Test (default features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=13"; fi
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
   scripts/run_tests.sh vault_oracle=11,desktop_gaps=2,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test
 )
 
 step "ci.yml / test: Test (all features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=13"; fi
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=""; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=""; else read_min=12; swap_min=5; os_store=",macos_keychain=16"; fi
   scripts/run_tests.sh vault_oracle=11,desktop_gaps=2,foreign_oracle=7,read_secret="$read_min",exchange="$swap_min$os_store" -- cargo test --all-features
 )
 
