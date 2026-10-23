@@ -2,7 +2,10 @@
 
 use std::os::fd::BorrowedFd;
 
-use rustix::termios::{isatty, tcgetattr, tcsetattr, LocalModes, OptionalActions, Termios};
+use rustix::termios::{
+    isatty, tcgetattr, tcsetattr, InputModes, LocalModes, OptionalActions, Termios,
+};
+use zeroize::Zeroize;
 
 use crate::prompt::{Input, PromptError};
 
@@ -25,15 +28,28 @@ impl<'a> NoEcho<'a> {
             .remove(LocalModes::ECHO | LocalModes::ECHOE | LocalModes::ECHOK);
         // the newline still shows, so the cursor moves past the prompt
         quiet.local_modes.insert(LocalModes::ECHONL);
+        // line mode with Enter ending the line, whatever mode the terminal was left in: without
+        // ICRNL (or with IGNCR) a canonical terminal never completes the line Enter sends
+        quiet.local_modes.insert(LocalModes::ICANON);
+        quiet.input_modes.insert(InputModes::ICRNL);
+        quiet
+            .input_modes
+            .remove(InputModes::INLCR | InputModes::IGNCR);
         tcsetattr(fd, OptionalActions::Now, &quiet).map_err(std::io::Error::from)?;
         Ok(Self { fd, saved })
     }
 
-    /// Reads into `buf`, retrying an interrupted read
-    pub(crate) fn read(&self, buf: &mut [u8]) -> Result<usize, PromptError> {
+    /// The next byte of the input (`None` at its end), retrying an interrupted read
+    pub(crate) fn next_byte(&mut self) -> Result<Option<u8>, PromptError> {
+        let mut byte = [0u8; 1];
         loop {
-            match rustix::io::read(self.fd, &mut *buf) {
-                Ok(n) => return Ok(n),
+            match rustix::io::read(self.fd, &mut byte) {
+                Ok(0) => return Ok(None),
+                Ok(_) => {
+                    let b = byte[0];
+                    byte.zeroize();
+                    return Ok(Some(b));
+                }
                 Err(rustix::io::Errno::INTR) => {}
                 Err(e) => return Err(std::io::Error::from(e).into()),
             }

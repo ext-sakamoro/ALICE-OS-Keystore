@@ -39,9 +39,14 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: clippy
-    runs-on: ubuntu-latest
+    name: clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # the Windows console code (src/sys/windows.rs) is compiled only there
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
@@ -68,15 +73,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # read_secret: 5 on unix (the 4 pseudo-terminal tests are unix only), 1 on Windows
+      # read_secret: 10 on unix (the 9 pseudo-terminal tests are unix only), 1 on Windows
       # (chosen in the shell, so that scripts/preflight.sh runs the same command; RUNNER_OS is unset locally)
       - name: Test (default features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=5; fi
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=10; fi
           scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,read_secret="$read_min" -- cargo test
       - name: Test (all features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=5; fi
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=10; fi
           scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5,read_secret="$read_min" -- cargo test --all-features
 
   doc:

@@ -184,13 +184,17 @@ mod pty {
         );
     }
 
-    /// The same in a terminal left in non-canonical mode (no line editing)
+    /// The same in a terminal left in non-canonical mode (no line editing, reads that do not wait)
     #[test]
     fn a_carriage_return_ends_the_line_in_a_non_canonical_terminal() {
         let (mut controller, terminal) = pair();
         let mut mode = tcgetattr(&terminal).unwrap();
         mode.input_modes.remove(InputModes::ICRNL);
         mode.local_modes.remove(LocalModes::ICANON);
+        // a read that returns at once with nothing (as a polling program leaves it): only line
+        // mode makes the reader wait for the line
+        mode.special_codes[rustix::termios::SpecialCodeIndex::VMIN] = 0;
+        mode.special_codes[rustix::termios::SpecialCodeIndex::VTIME] = 0;
         tcsetattr(&terminal, OptionalActions::Now, &mode).unwrap();
         let watched = terminal.try_clone().unwrap();
         let rx = spawn_reader(terminal);

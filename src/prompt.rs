@@ -1,9 +1,21 @@
 //! Reading a secret from a terminal without echoing it
 //!
 //! [`read_secret`] writes a prompt to standard error and reads one line from
-//! standard input with the terminal's echo turned off. The terminal's previous
-//! mode is restored on every way out of the call: a line read, an error, or a
-//! panic (a guard restores it when dropped).
+//! standard input with the terminal's echo turned off. While it reads, the
+//! terminal is in line mode with Enter ending the line: on unix canonical mode
+//! with a carriage return translated to a line feed (`ICANON`, `ICRNL`, and
+//! `INLCR` / `IGNCR` cleared), on Windows line and processed input. Either a
+//! line feed or a carriage return ends the line, so a terminal left in another
+//! mode by a previous program does not keep the read waiting.
+//!
+//! The terminal's previous mode is restored when the call returns a line, returns
+//! an error, or unwinds from a panic (a guard restores it when dropped). It is
+//! **not** restored when the process ends without unwinding while the prompt is
+//! waiting: the default action of `SIGINT` / Ctrl-C (and other signals that end
+//! the process), a console control handler that ends it, `panic = "abort"`, or
+//! `std::process::exit`. The terminal is then left without echo; `stty sane` (or
+//! `stty echo`) restores a unix terminal, and closing the console window restores
+//! a Windows console.
 //!
 //! Standard input that is not a terminal (a pipe, a file, no console) is
 //! refused with [`PromptError::NotATerminal`] before anything is written, so a
@@ -11,9 +23,13 @@
 //! variable) chooses that path deliberately instead of reading a pipe as if a
 //! person had typed it.
 //!
-//! The line is read into a buffer of fixed capacity ([`MAX_SECRET_LEN`]) that
-//! never grows, so no reallocation leaves a copy of the secret behind, and the
-//! returned value is zeroed when dropped.
+//! The line is read into one heap buffer of fixed size ([`MAX_SECRET_LEN`]
+//! bytes) that is never grown or moved and is zeroed before the call returns or
+//! unwinds; the returned value is the only other copy, and it is zeroed when
+//! dropped. On Windows the console is read as UTF-16 (so text in any code page
+//! arrives as typed) and converted to UTF-8 one unit at a time in fixed storage
+//! that is zeroed as it is consumed; an unpaired surrogate is refused as
+//! [`PromptError::NotUtf8`].
 //!
 //! ```no_run
 //! let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?;
@@ -24,9 +40,15 @@
 use std::fmt;
 use std::io::Write;
 
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::sys;
+
+mod line;
+#[cfg(test)]
+mod tests;
+#[cfg(any(windows, test))]
+pub(crate) mod utf16;
 
 /// The longest secret [`read_secret`] accepts, in bytes (a longer line is
 /// refused with [`PromptError::TooLong`]).
@@ -115,25 +137,12 @@ pub fn read_secret_from<I: Input + ?Sized>(
     out: &mut dyn Write,
     prompt: &str,
 ) -> Result<Zeroizing<String>, PromptError> {
-    let guard = sys::NoEcho::begin(input)?;
+    let mut guard = sys::NoEcho::begin(input)?;
     out.write_all(prompt.as_bytes())?;
     out.flush()?;
 
-    let mut line = Zeroizing::new(Vec::<u8>::with_capacity(MAX_SECRET_LEN));
-    let mut too_long = false;
-    loop {
-        let mut byte = [0u8; 1];
-        if guard.read(&mut byte)? == 0 {
-            return Err(PromptError::Closed);
-        }
-        match byte[0] {
-            b'\n' => break,
-            b'\r' => {}
-            b if line.len() < MAX_SECRET_LEN => line.push(b),
-            _ => too_long = true,
-        }
-        byte.zeroize();
-    }
+    let mut buf = line::line_buf();
+    let read = line::collect_line(&mut buf, || guard.next_byte());
     drop(guard);
     // a console with echo off does not show the Enter key (on unix the terminal echoes the
     // newline itself, ECHONL): move past the prompt
@@ -142,18 +151,5 @@ pub fn read_secret_from<I: Input + ?Sized>(
         out.write_all(b"\n")?;
         out.flush()?;
     }
-
-    if too_long {
-        return Err(PromptError::TooLong);
-    }
-    if line.is_empty() {
-        return Err(PromptError::Empty);
-    }
-    match String::from_utf8(std::mem::take(&mut *line)) {
-        Ok(s) => Ok(Zeroizing::new(s)),
-        Err(e) => {
-            e.into_bytes().zeroize();
-            Err(PromptError::NotUtf8)
-        }
-    }
+    read
 }

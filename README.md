@@ -34,7 +34,7 @@ let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is
 # Ok::<(), alice_os_keystore::prompt::PromptError>(())
 ```
 
-`prompt::read_secret` writes the prompt to standard error and reads one line from standard input with the terminal's echo turned off, then restores the terminal's previous mode on every way out (a line read, an error, a panic). Standard input that is not a terminal is refused (`NotATerminal`) before anything is written, so a program that also accepts the secret from an environment variable chooses that path on purpose. An empty line (`Empty`), a line longer than 512 bytes (`TooLong`) and an input that ends early (`Closed`) are separate errors. The line is read into a fixed buffer that never grows, and the returned string is zeroed on drop.
+`prompt::read_secret` writes the prompt to standard error and reads one line from standard input with the terminal's echo turned off. While it reads, the terminal is in line mode with Enter ending the line (unix: canonical mode with a carriage return translated; Windows: line and processed input), and either a line feed or a carriage return ends the line, so a terminal left in another mode by a previous program does not keep the read waiting. The previous mode is restored when the call returns a line or an error or unwinds from a panic. It is not restored when the process ends without unwinding while the prompt waits (the default action of Ctrl-C / `SIGINT`, a console control handler that exits, `panic = "abort"`, `std::process::exit`): `stty sane` restores a unix terminal, and closing the window restores a Windows console. Standard input that is not a terminal is refused (`NotATerminal`) before anything is written, so a program that also accepts the secret from an environment variable chooses that path on purpose. An empty line (`Empty`), a line longer than 512 bytes (`TooLong`), an input that ends early (`Closed`) and a line that is not UTF-8 (`NotUtf8`) are separate errors. The line is read into one fixed heap buffer that never grows or moves and is zeroed before the call returns; the returned string is the only other copy and is zeroed on drop. On Windows the console is read as UTF-16, so a secret typed in any code page arrives as typed.
 
 ### Unsafe code
 
@@ -85,7 +85,7 @@ extension SecureEnclaveVault: ForeignKeyVault {
 - Desktop key stores (macOS Keychain, Windows DPAPI / CNG, Linux Secret Service)
 - Android Keystore
 - That `DataKey` is zeroed on drop is not checked by a test (it relies on the `zeroize` crate)
-- Reading a secret on a Windows console: the code is built and linted on Windows and refusing a non-console input is tested there, but typing at a console is not tested (CI has no console); on unix the reader is tested through a pseudo-terminal
+- Reading a secret on a Windows console: the code is built and linted (clippy, pedantic) on Windows, refusing a non-console input is tested there, and the UTF-16 to UTF-8 conversion is unit-tested on every OS, but typing at a console is not tested (CI has no console); on unix the reader is tested through a pseudo-terminal
 
 ## Tests
 
