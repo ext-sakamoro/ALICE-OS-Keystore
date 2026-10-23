@@ -262,4 +262,53 @@ mod pty {
         assert!(out.1, "echo was not off when the panic happened");
         assert!(echo_on(&terminal), "echo was not restored after a panic");
     }
+
+    /// A terminal left ignoring carriage returns (IGNCR): the reader clears it,
+    /// so Enter still ends the line, and the mode it found is the mode it leaves
+    #[test]
+    fn a_carriage_return_ends_the_line_when_the_terminal_ignores_it() {
+        let (mut controller, terminal) = pair();
+        let mut mode = tcgetattr(&terminal).unwrap();
+        mode.input_modes.insert(InputModes::IGNCR);
+        tcsetattr(&terminal, OptionalActions::Now, &mode).unwrap();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all(b"igncr\r").unwrap();
+        assert_eq!(result(&rx).unwrap().as_str(), "igncr");
+        let after = tcgetattr(&watched).unwrap();
+        assert!(
+            after.local_modes.contains(LocalModes::ECHO),
+            "echo was not restored"
+        );
+        assert!(
+            after.input_modes.contains(InputModes::IGNCR),
+            "the reader did not restore the mode it found"
+        );
+    }
+
+    /// A terminal left turning line feeds into carriage returns (INLCR): the
+    /// reader clears it, so a line feed still ends the line, and the mode it found
+    /// is the mode it leaves
+    #[test]
+    fn a_line_feed_ends_the_line_when_the_terminal_turns_it_into_a_carriage_return() {
+        let (mut controller, terminal) = pair();
+        let mut mode = tcgetattr(&terminal).unwrap();
+        mode.input_modes.insert(InputModes::INLCR);
+        tcsetattr(&terminal, OptionalActions::Now, &mode).unwrap();
+        let watched = terminal.try_clone().unwrap();
+        let rx = spawn_reader(terminal);
+        wait_for_echo_off(&watched);
+        controller.write_all(b"inlcr\n").unwrap();
+        assert_eq!(result(&rx).unwrap().as_str(), "inlcr");
+        let after = tcgetattr(&watched).unwrap();
+        assert!(
+            after.local_modes.contains(LocalModes::ECHO),
+            "echo was not restored"
+        );
+        assert!(
+            after.input_modes.contains(InputModes::INLCR),
+            "the reader did not restore the mode it found"
+        );
+    }
 }

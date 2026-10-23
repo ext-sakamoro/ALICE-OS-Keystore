@@ -122,3 +122,37 @@ fn elsewhere_the_swap_is_unsupported_and_nothing_moves() {
     assert_eq!(read(&a, "f"), "a");
     assert_eq!(read(&b, "f"), "b");
 }
+
+/// Two paths on different file systems are refused (`EXDEV`) and nothing
+/// moves. Linux only: the temporary directory and `/dev/shm` (a tmpfs) are two
+/// file systems on the CI runner; if they are not, the test fails instead of
+/// passing without having compared anything.
+#[cfg(target_os = "linux")]
+#[test]
+fn paths_on_different_file_systems_are_refused_and_nothing_moves() {
+    use std::os::unix::fs::MetadataExt;
+    let here = dir("exdev");
+    let shm =
+        std::path::Path::new("/dev/shm").join(format!("exchange-{}-exdev", std::process::id()));
+    let _ = std::fs::remove_dir_all(&shm);
+    std::fs::create_dir_all(&shm).unwrap();
+    assert_ne!(
+        std::fs::metadata(&here).unwrap().dev(),
+        std::fs::metadata(&shm).unwrap().dev(),
+        "the temporary directory and /dev/shm are one file system: nothing would be compared"
+    );
+    let a = here.join("a");
+    let b = shm.join("b");
+    std::fs::create_dir(&a).unwrap();
+    std::fs::create_dir(&b).unwrap();
+    put(&a, "f", "in a");
+    put(&b, "f", "in b");
+    let r = exchange(&a, &b);
+    match r {
+        Err(ExchangeError::Io(e)) => assert_eq!(e.raw_os_error(), Some(18), "{e:?}"), // EXDEV
+        other => panic!("expected EXDEV, got {other:?}"),
+    }
+    assert_eq!(read(&a, "f"), "in a");
+    assert_eq!(read(&b, "f"), "in b");
+    let _ = std::fs::remove_dir_all(&shm);
+}
