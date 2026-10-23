@@ -74,15 +74,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # read_secret: 10 on unix (the 9 pseudo-terminal tests are unix only), 1 on Windows
+      # exchange: 2 on Linux / macOS (atomic swap), 1 on Windows (Unsupported)
       # (chosen in the shell, so that scripts/preflight.sh runs the same command; RUNNER_OS is unset locally)
       - name: Test (default features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=10; fi
-          scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,read_secret="$read_min" -- cargo test
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=2; fi
+          scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,read_secret="$read_min",exchange="$swap_min" -- cargo test
       - name: Test (all features)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=10; fi
-          scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5,read_secret="$read_min" -- cargo test --all-features
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=2; fi
+          scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5,read_secret="$read_min",exchange="$swap_min" -- cargo test --all-features
 
   doc:
     name: doc
