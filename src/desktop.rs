@@ -3,7 +3,7 @@
 //! | store | state |
 //! |---|---|
 //! | `MacosKeychainStore` (macOS only) | implemented: login keychain, one generic password item per generation |
-//! | [`WindowsDpapiStore`] | not implemented: every call fails fast (`todo!`) |
+//! | `WindowsDpapiStore` (Windows only) | implemented: one DPAPI-sealed file per generation under `%LOCALAPPDATA%` |
 //! | [`LinuxSecretServiceStore`] | not implemented: every call fails fast (`todo!`) |
 //!
 //! The implemented stores share one model: one 32-byte random key per generation, each
@@ -31,20 +31,13 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::MacosKeychainStore;
 
-/// Windows DPAPI (not implemented)
-pub struct WindowsDpapiStore;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::WindowsDpapiStore;
 
 /// Linux Secret Service (not implemented)
 pub struct LinuxSecretServiceStore;
-
-impl KeyProvider for WindowsDpapiStore {
-    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
-        todo!("Windows DPAPI store not implemented")
-    }
-    fn by_generation(&self, _generation: KeyGeneration) -> Result<Key, KeyProviderError> {
-        todo!("Windows DPAPI store not implemented")
-    }
-}
 
 impl KeyProvider for LinuxSecretServiceStore {
     fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
@@ -57,14 +50,14 @@ impl KeyProvider for LinuxSecretServiceStore {
 
 /// What one store holds for a service: the generations with a key item, and the
 /// generations marked as issued (each a canonical number; other names are left out)
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 #[derive(Default)]
 struct Inventory {
     keys: std::collections::BTreeSet<KeyGeneration>,
     issued: std::collections::BTreeSet<KeyGeneration>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 impl Inventory {
     /// The highest generation ever issued (key or marker)
     fn high_water(&self) -> Option<KeyGeneration> {
@@ -73,7 +66,7 @@ impl Inventory {
 }
 
 /// One operating system store holding one key item and one marker per generation
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 trait GenerationItems {
     /// The key items and markers present
     fn inventory(&self) -> Result<Inventory, KeyProviderError>;
@@ -87,16 +80,16 @@ trait GenerationItems {
 
 /// How often one call re-reads the items when another process changed them meanwhile
 /// (each retry follows an item someone else added or removed)
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 const ATTEMPTS: usize = 64;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 const CHANGING: KeyProviderError =
     KeyProviderError::Unavailable("the stored items kept changing during the call");
 
 /// The generation a name `<prefix><n><suffix>` stands for (`n` decimal without a leading
 /// zero, at least 1), `None` for any other name
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration> {
     let digits = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
     if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -105,13 +98,13 @@ fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration
     digits.parse().ok()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn fresh_key() -> Result<Key, KeyProviderError> {
     Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))
 }
 
 /// Read `generation`'s key, recording its marker when the key item has none
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn read_marked<S: GenerationItems>(
     s: &S,
     inv: &Inventory,
@@ -124,7 +117,7 @@ fn read_marked<S: GenerationItems>(
     Ok(key)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProviderError> {
     for _ in 0..ATTEMPTS {
         let inv = s.inventory()?;
@@ -149,7 +142,7 @@ fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProv
     Err(CHANGING)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderError> {
     for _ in 0..ATTEMPTS {
         let next = match s.inventory()?.high_water() {
@@ -166,7 +159,7 @@ fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderErro
     Err(CHANGING)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn by_generation_of<S: GenerationItems>(
     s: &S,
     generation: KeyGeneration,

@@ -9,7 +9,8 @@ An application seals its data at rest with a 32-byte key and does not store that
 | iOS / iPadOS / visionOS | `apple/` Swift package: `SecureEnclaveVault` (a Secure Enclave P-256 key wraps the DEK with ECIES, the wrapped blob is a Keychain item for this device only), `MasterVault` (a biometry-bound secret), `KeychainVault` (Keychain only, for the Simulator) | implemented; reaches Rust through the `uniffi` feature |
 | Android | Keystore through the same callback interface | not yet |
 | macOS | `desktop::MacosKeychainStore`: one generic password item per generation in the login keychain | implemented |
-| Windows / Linux | `desktop::{WindowsDpapiStore, LinuxSecretServiceStore}` | not yet: every call fails fast (`todo!`) |
+| Windows | `desktop::WindowsDpapiStore`: one DPAPI-sealed file per generation in `%LOCALAPPDATA%\<service>` | implemented |
+| Linux | `desktop::LinuxSecretServiceStore` | not yet: every call fails fast (`todo!`) |
 | tests, ephemeral data | `MemoryVault` | implemented (keys only in memory, nothing protected at rest) |
 
 ## Rust
@@ -42,6 +43,20 @@ let (generation, key) = store.current()?;                  // creates generation
 
 Each generation is one generic password item in the login keychain (service = the name passed in, account = `gen-<n>`, data = the 32 key bytes), created once with `SecItemAdd` and never rewritten, followed by a create-only marker item `issued-<n>`. The highest issued generation is the highest of the keys and markers, and a number is never issued twice: `rotate` adds the next number above it, even when the newest key item was removed. `current` returns the newest generation and creates generation 1 when there is none; when the newest key item was removed it reports `Irrecoverable` instead of falling back to an older key (an explicit `rotate` continues). Two processes creating the same generation at once cannot both succeed: the keychain refuses the second item and that call reads the first. `by_generation` reports a missing key at or below the highest issued generation as `Irrecoverable` and above it as `UnknownGeneration`. A key item found without its marker (a process stopped between the two writes) gets the marker when it is read. Limit: the markers live in the same keychain; a program that removes both the newest key item and its marker erases the record, and that number is issued again (nothing inside the store can prevent it). The file-based login keychain is used because the data-protection keychain needs a signed app with an access group, which a command-line program does not have. The program that created an item reads it without a dialog; another program, or a rebuild with a different signature, gets the system's access dialog, and a refusal is `Unavailable`. The bytes the Security framework returns are copied into the key and the returned buffer is zeroed; copies inside the framework are outside this crate's reach.
 
+### Windows DPAPI
+
+```rust,no_run
+# #[cfg(windows)] {
+use alice_os_keystore::{desktop::WindowsDpapiStore, KeyProvider};
+
+let store = WindowsDpapiStore::new("com.example.app").expect("a plain directory name");
+let (generation, key) = store.current()?;                  // creates generation 1 on first use
+# }
+# Ok::<(), alice_os_keystore::KeyProviderError>(())
+```
+
+Each generation is one file `gen-<n>.dpapi` in `%LOCALAPPDATA%\<service>` (or a directory given with `in_dir`): the 32 key bytes sealed with DPAPI for the current user, bound to the directory's own name, so a file copied into another store's directory does not open there. A file is written under a temporary name and hard-linked to its final name, which fails when the name exists: a generation appears complete or not at all, and two processes creating it at once cannot both succeed. An empty marker file `issued-<n>` follows each key file, and the model (numbers never issued twice, a removed newest key is `Irrecoverable`, the same limit) is the macOS one. A file that does not open for this user (damaged, another user's, or sealed before an administrator reset the user's password) is `Irrecoverable`. `new` refuses a service name that is not one plain directory name (separators, `.` / `..`, reserved device names such as `NUL`). The plaintext DPAPI returns is zeroed before it is freed.
+
 ### Reading a secret from a terminal
 
 ```rust,no_run
@@ -57,7 +72,7 @@ let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is
 
 ### Unsafe code
 
-`unsafe` code is allowed only in `src/sys/`, the module that makes the operating system calls this crate makes itself (today the Windows console mode). The macOS Keychain is reached through the `security-framework` crate, with no `unsafe` here. Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI and by `scripts/preflight.sh`) fails on any `unsafe` outside `src/sys/`. On unix the terminal is controlled through `rustix`'s safe API.
+`unsafe` code is allowed only in `src/sys/`, the module that makes the operating system calls this crate makes itself (today the Windows console mode and DPAPI). The macOS Keychain is reached through the `security-framework` crate, with no `unsafe` here. Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI and by `scripts/preflight.sh`) fails on any `unsafe` outside `src/sys/`. On unix the terminal is controlled through `rustix`'s safe API.
 
 ## Swift (Apple platforms)
 
@@ -101,7 +116,8 @@ extension SecureEnclaveVault: ForeignKeyVault {
 
 - `tools/uniffi-bindgen` (build-time only) has its own lock; its audit runs as an informational job (its basic-toml advisory is known). The library's `Cargo.lock` also lists basic-toml because uniffi 0.28 records its optional generator dependency; it is not built into the library (cargo-deny, which resolves features, does not report it) and the audit ignores it with an exit condition in `security-audit.yml`
 
-- Desktop key stores for Windows (DPAPI) and Linux (Secret Service)
+- Desktop key store for Linux (Secret Service)
+- Windows DPAPI store: run only on the CI Windows runner; that a file does not open for another Windows user is DPAPI's documented behaviour and not tested here (CI has one user)
 - macOS Keychain: the retry in `current` when an item disappears between listing and reading is not exercised by a test (it needs another process deleting at that moment), and that the buffer returned by the Security framework is zeroed is not observable from a test
 - Android Keystore
 - Reading a secret on a Windows console: the code is built and linted (clippy, pedantic) on Windows, refusing a non-console input is tested there, and the UTF-16 to UTF-8 conversion is unit-tested on every OS, but typing at a console is not tested (CI has no console); on unix the reader is tested through a pseudo-terminal
