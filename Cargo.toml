@@ -22,9 +22,17 @@ getrandom = "0.2"
 zeroize = "1"
 uniffi = { version = "=0.28.3", optional = true }
 
+# reading a secret from a terminal: echo control (prompt module)
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["termios"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+
 # the prompt tests drive the reader through a pseudo-terminal
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { version = "1.1", features = ["termios", "pty", "fs"] }
 
 [lints.rust]
-unsafe_code = "forbid"
+# unsafe code is allowed only in src/sys/ (the operating system calls), see scripts/unsafe_scope_check.py
+unsafe_code = "deny"

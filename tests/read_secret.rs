@@ -16,7 +16,10 @@ fn input_that_is_not_a_terminal_is_refused() {
     let mut prompt_out = Vec::new();
     let r = read_secret_from(&input, &mut prompt_out, "Passphrase: ");
     assert!(matches!(r, Err(PromptError::NotATerminal)), "{r:?}");
-    assert!(prompt_out.is_empty(), "a prompt was written for a non-terminal");
+    assert!(
+        prompt_out.is_empty(),
+        "a prompt was written for a non-terminal"
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -37,19 +40,30 @@ mod pty {
         grantpt(&controller).unwrap();
         unlockpt(&controller).unwrap();
         let name = ptsname(&controller, Vec::new()).unwrap();
-        let terminal = rustix::fs::open(name.as_c_str(), OFlags::RDWR | OFlags::NOCTTY, Mode::empty()).unwrap();
+        let terminal = rustix::fs::open(
+            name.as_c_str(),
+            OFlags::RDWR | OFlags::NOCTTY,
+            Mode::empty(),
+        )
+        .unwrap();
         (std::fs::File::from(controller), terminal)
     }
 
     fn echo_on(fd: &OwnedFd) -> bool {
-        tcgetattr(fd).unwrap().local_modes.contains(LocalModes::ECHO)
+        tcgetattr(fd)
+            .unwrap()
+            .local_modes
+            .contains(LocalModes::ECHO)
     }
 
     /// Waits until the reader has turned echo off (it does so before reading).
     fn wait_for_echo_off(fd: &OwnedFd) {
         let start = Instant::now();
         while echo_on(fd) {
-            assert!(start.elapsed() < Duration::from_secs(10), "echo was never turned off");
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "echo was never turned off"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -81,7 +95,10 @@ mod pty {
         controller.write_all(b"\n").unwrap();
         let r = reader.join().unwrap();
         assert!(matches!(r, Err(PromptError::Empty)), "{r:?}");
-        assert!(echo_on(&watched), "echo was not restored after an empty line");
+        assert!(
+            echo_on(&watched),
+            "echo was not restored after an empty line"
+        );
     }
 
     #[test]
@@ -93,7 +110,10 @@ mod pty {
         wait_for_echo_off(&watched);
         drop(controller);
         let r = reader.join().unwrap();
-        assert!(matches!(r, Err(PromptError::Io(_) | PromptError::Closed)), "{r:?}");
+        assert!(
+            matches!(r, Err(PromptError::Io(_) | PromptError::Closed)),
+            "{r:?}"
+        );
         assert!(echo_on(&watched), "echo was not restored after an error");
     }
 
@@ -111,6 +131,9 @@ mod pty {
         controller.write_all(b"\n").unwrap();
         let r = reader.join().unwrap();
         assert!(matches!(r, Err(PromptError::TooLong)), "{r:?}");
-        assert!(echo_on(&watched), "echo was not restored after a refused line");
+        assert!(
+            echo_on(&watched),
+            "echo was not restored after a refused line"
+        );
     }
 }

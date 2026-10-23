@@ -26,6 +26,18 @@
 //! assert_eq!(vault.by_id(current)?.as_bytes(), key.as_bytes());
 //! # Ok::<(), alice_os_keystore::VaultError>(())
 //! ```
+//!
+//! [`prompt::read_secret`] reads a secret (a passphrase) from a terminal without
+//! echoing it, for applications whose keys are derived from what a person types.
+//!
+//! # Unsafe code
+//!
+//! `unsafe` code is allowed only in the private `sys` module, which holds the
+//! operating system calls (today the Windows console mode; the desktop key stores
+//! go there when implemented). Every `unsafe` block there carries a `SAFETY:`
+//! note. The rest of the crate denies `unsafe` code, and
+//! `scripts/unsafe_scope_check.py` (run in CI) fails on any `unsafe` outside
+//! `src/sys/`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -36,6 +48,11 @@ use zeroize::Zeroize;
 pub mod desktop;
 #[cfg(feature = "uniffi")]
 pub mod ffi;
+#[cfg(any(unix, windows))]
+pub mod prompt;
+#[cfg(any(unix, windows))]
+#[allow(unsafe_code)]
+mod sys;
 
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();

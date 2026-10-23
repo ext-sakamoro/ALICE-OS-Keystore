@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev d8e28ae2dcf08c36be130cbb16ec28e4c40619f1
+# generator rev 6b6e5b67702f00636f3dd23b6b6691c24b1420b9
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -82,9 +82,73 @@ heavy_slot_release() {
     HEAVY_SLOT_KEEPER=
   fi
 }
+# memory: `heavy_slot_watch <pid> &` sums the RSS of that process and its descendants about once a second
+# (ALICE_HEAVY_SLOT_RSS_POLL) and past ALICE_HEAVY_SLOT_RSS_CAP_MIB (default 8192 = 8 GiB) kills the tree (itself
+# aside) and prints `[heavy-slot] RSS cap <N>GiB exceeded by <pid> <cmd> (tree <M> MiB)`; it returns once the
+# process is gone. A time limit does not bound memory (a test that loops while pushing fills the machine inside
+# its timeout), this does. A `ps` that cannot list the tree turns the cap off with a note, not silently.
+heavy_slot_cap_ok() {
+  case "${ALICE_HEAVY_SLOT_RSS_CAP_MIB:-8192}" in
+    '' | *[!0-9]* | 0) echo "heavy slot: ALICE_HEAVY_SLOT_RSS_CAP_MIB must be a positive integer" >&2; return 2 ;;
+  esac
+}
+# "<pid> <rss KiB> <command>" for the process $1 and its descendants, leaving out $2 and its descendants
+heavy_slot_tree() {
+  ps -A -o pid=,ppid=,rss=,comm= | awk -v root="$1" -v skip="${2:-}" '
+    { pid[NR] = $1; ppid[NR] = $2; rss[NR] = $3; $1 = $2 = $3 = ""; cmd[NR] = substr($0, 4) }
+    END {
+      in_tree[root] = 1; grew = 1
+      while (grew) {
+        grew = 0
+        for (i = 1; i <= NR; i++)
+          if (!(pid[i] in in_tree) && pid[i] != skip && (ppid[i] in in_tree)) { in_tree[pid[i]] = 1; grew = 1 }
+      }
+      for (i = 1; i <= NR; i++) if (pid[i] in in_tree) print pid[i], rss[i], cmd[i]
+    }'
+}
+# whether $1 runs (a zombie has ended: a watcher started by the process it watches outlives it until reaped)
+heavy_slot_alive() {
+  local st
+  st=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  case "$st" in '' | *Z*) return 1 ;; esac
+}
+heavy_slot_watch() {
+  local root=$1 cap="${ALICE_HEAVY_SLOT_RSS_CAP_MIB:-8192}" poll="${ALICE_HEAVY_SLOT_RSS_POLL:-1}" self tree sum \
+    top peak=0 samples=0 noted=0
+  self=$(exec sh -c 'echo "$PPID"')
+  if kill -0 "$root" 2>/dev/null && ! heavy_slot_alive "$root"; then
+    echo "[heavy-slot] note: ps does not show pid $root here, so the memory cap is off" >&2
+    return 0
+  fi
+  while heavy_slot_alive "$root"; do
+    tree=$(heavy_slot_tree "$root" "$self" 2>/dev/null) || tree=""
+    if [ -z "$tree" ]; then
+      if [ "$noted" = 0 ] && heavy_slot_alive "$root"; then
+        echo "[heavy-slot] note: ps does not list pid $root here, so the memory cap is off" >&2
+        noted=1
+      fi
+    else
+      sum=$(printf '%s\n' "$tree" | awk '{ s += $2 } END { printf "%d", s / 1024 }')
+      samples=$((samples + 1))
+      if [ "$sum" -gt "$peak" ]; then peak=$sum; fi
+      if [ "$sum" -gt "$cap" ]; then
+        top=$(printf '%s\n' "$tree" | sort -k2,2nr | head -1)
+        # shellcheck disable=SC2046 # one pid per word
+        kill -9 $(printf '%s\n' "$tree" | cut -d" " -f1) 2>/dev/null || true
+        echo "[heavy-slot] RSS cap $(awk -v c="$cap" 'BEGIN { printf "%g", c / 1024 }')GiB exceeded by ${top%% *} $(printf '%s\n' "$top" | cut -d" " -f3-) (tree $sum MiB)" >&2
+        return 137
+      fi
+    fi
+    sleep "$poll"
+  done
+  if [ "${ALICE_HEAVY_SLOT_RSS_REPORT:-}" = 1 ]; then echo "[heavy-slot] RSS peak $peak MiB over $samples samples" >&2; fi
+  return 0
+}
 # --- heavy slot (end) ---
 heavy_slot_acquire "$(basename "$PWD")" preflight || exit 1
 trap heavy_slot_release EXIT
+heavy_slot_cap_ok || exit 2
+heavy_slot_watch "$$" >/dev/null &
 
 quick=0
 [[ "${1:-}" == "--quick" ]] && quick=1
@@ -131,6 +195,12 @@ step "ci.yml / doc: run"
 
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_run_tests.py )
+
+step "ci.yml / scripts: run"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_unsafe_scope_check.py )
+
+step "ci.yml / scripts: run"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/unsafe_scope_check.py )
 
 step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
 ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo fetch --locked )
@@ -268,10 +338,18 @@ if [[ $quick -eq 1 ]]; then
 fi
 
 step "ci.yml / test: Test (default features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=10,desktop_gaps=3 -- cargo test )
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=5; fi
+  scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,read_secret="$read_min" -- cargo test
+)
 
 step "ci.yml / test: Test (all features)"
-( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5 -- cargo test --all-features )
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; else read_min=5; fi
+  scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5,read_secret="$read_min" -- cargo test --all-features
+)
 
 step "ci.yml / apple: run"
 if command -v xcodebuild >/dev/null 2>&1; then

@@ -27,6 +27,19 @@ assert_eq!(again.as_bytes(), key.as_bytes());
 
 `DataKey` zeroes its bytes on drop and does not print them. `VaultError` separates three cases an application handles differently: a key that does not exist (`UnknownKey`), a store that cannot hand out keys right now (`Unavailable`: device locked, authentication refused; a later call may succeed), and a key that cannot be recovered (`Irrecoverable`: the hardware key that wraps it is gone or the wrapped blob does not open; retrying does not help).
 
+### Reading a secret from a terminal
+
+```rust,no_run
+let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is off while typing
+# Ok::<(), alice_os_keystore::prompt::PromptError>(())
+```
+
+`prompt::read_secret` writes the prompt to standard error and reads one line from standard input with the terminal's echo turned off, then restores the terminal's previous mode on every way out (a line read, an error, a panic). Standard input that is not a terminal is refused (`NotATerminal`) before anything is written, so a program that also accepts the secret from an environment variable chooses that path on purpose. An empty line (`Empty`), a line longer than 512 bytes (`TooLong`) and an input that ends early (`Closed`) are separate errors. The line is read into a fixed buffer that never grows, and the returned string is zeroed on drop.
+
+### Unsafe code
+
+`unsafe` code is allowed only in `src/sys/`, the module that makes the operating system calls (today the Windows console mode; the desktop key stores go there when they are implemented). Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI and by `scripts/preflight.sh`) fails on any `unsafe` outside `src/sys/`. On unix the terminal is controlled through `rustix`'s safe API.
+
 ## Swift (Apple platforms)
 
 With the `uniffi` feature the crate exports a callback interface `ForeignKeyVault` (`current() -> GenerationKey`, `by_id(generation) -> bytes`). The application conforms a vault from `apple/` to the generated protocol and passes it to Rust, where `ffi::ForeignVaultAdapter` accepts only 32-byte keys and keeps the error kind.
@@ -72,6 +85,7 @@ extension SecureEnclaveVault: ForeignKeyVault {
 - Desktop key stores (macOS Keychain, Windows DPAPI / CNG, Linux Secret Service)
 - Android Keystore
 - That `DataKey` is zeroed on drop is not checked by a test (it relies on the `zeroize` crate)
+- Reading a secret on a Windows console: the code is built and linted on Windows and refusing a non-console input is tested there, but typing at a console is not tested (CI has no console); on unix the reader is tested through a pseudo-terminal
 
 ## Tests
 

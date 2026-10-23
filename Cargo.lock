@@ -9,6 +9,7 @@ dependencies = [
  "getrandom",
  "rustix",
  "uniffi",
+ "windows-sys",
  "zeroize",
 ]
 
