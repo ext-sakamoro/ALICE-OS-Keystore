@@ -68,6 +68,12 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 
+# alice-crypto は AGPL-3.0-or-later OR LicenseRef-Commercial の二重 license この crate は Proprietary なので
+# commercial の側で使う (AGPL の側は許可しない)
+[[licenses.exceptions]]
+name = "alice-crypto"
+allow = ["LicenseRef-Commercial"]
+
 [[licenses.clarify]]
 name = "ring"
 version = "*"
@@ -102,6 +108,7 @@ skip-tree = []
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# alice-crypto: public sibling, pinned by the full commit in Cargo.toml
+allow-git = ["https://github.com/ext-sakamoro/ALICE-Crypto"]
 
 [sources.allow-org]

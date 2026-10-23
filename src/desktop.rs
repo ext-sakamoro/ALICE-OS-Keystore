@@ -1,44 +1,41 @@
-//! Desktop key stores: not implemented yet
+//! Desktop key stores
 //!
-//! Each type names the store it will use. Until then every call fails fast
-//! (`todo!`), so a desktop build never silently runs without a protected key.
-//! Gaps, in order: macOS Keychain (data protection keychain, needs a signed
-//! binary with an access group), Windows DPAPI / CNG, Linux Secret Service.
+//! | store | state |
+//! |---|---|
+//! | [`MacosKeychainStore`] (macOS only) | implemented: login keychain, one generic password item per generation |
+//! | [`WindowsDpapiStore`] | not implemented: every call fails fast (`todo!`) |
+//! | [`LinuxSecretServiceStore`] | not implemented: every call fails fast (`todo!`) |
+//!
+//! A store that is not implemented never hands out a key or reports success, so a
+//! desktop build never silently runs without a protected key.
 
-use crate::{DataKey, KeyVault, VaultError};
+use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
 
-/// macOS Keychain (not implemented)
-pub struct MacosKeychainVault;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::MacosKeychainStore;
 
-/// Windows DPAPI / CNG (not implemented)
-pub struct WindowsDpapiVault;
+/// Windows DPAPI (not implemented)
+pub struct WindowsDpapiStore;
 
 /// Linux Secret Service (not implemented)
-pub struct LinuxSecretServiceVault;
+pub struct LinuxSecretServiceStore;
 
-impl KeyVault for MacosKeychainVault {
-    fn current(&self) -> Result<(u32, DataKey), VaultError> {
-        todo!("macOS Keychain vault not implemented")
+impl KeyProvider for WindowsDpapiStore {
+    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
+        todo!("Windows DPAPI store not implemented")
     }
-    fn by_id(&self, _generation: u32) -> Result<DataKey, VaultError> {
-        todo!("macOS Keychain vault not implemented")
+    fn by_generation(&self, _generation: KeyGeneration) -> Result<Key, KeyProviderError> {
+        todo!("Windows DPAPI store not implemented")
     }
 }
 
-impl KeyVault for WindowsDpapiVault {
-    fn current(&self) -> Result<(u32, DataKey), VaultError> {
-        todo!("Windows DPAPI vault not implemented")
+impl KeyProvider for LinuxSecretServiceStore {
+    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
+        todo!("Linux Secret Service store not implemented")
     }
-    fn by_id(&self, _generation: u32) -> Result<DataKey, VaultError> {
-        todo!("Windows DPAPI vault not implemented")
-    }
-}
-
-impl KeyVault for LinuxSecretServiceVault {
-    fn current(&self) -> Result<(u32, DataKey), VaultError> {
-        todo!("Linux Secret Service vault not implemented")
-    }
-    fn by_id(&self, _generation: u32) -> Result<DataKey, VaultError> {
-        todo!("Linux Secret Service vault not implemented")
+    fn by_generation(&self, _generation: KeyGeneration) -> Result<Key, KeyProviderError> {
+        todo!("Linux Secret Service store not implemented")
     }
 }

@@ -1,10 +1,12 @@
-//! A key store implemented in Swift or Kotlin, handed to Rust as a [`KeyVault`]
+//! A key store implemented in Swift or Kotlin, handed to Rust as a [`KeyProvider`]
 //!
 //! The foreign side implements [`ForeignKeyVault`] (generated as a Swift protocol /
 //! Kotlin interface by `UniFFI`) and passes it in; [`ForeignVaultAdapter`] checks
-//! what comes back (exactly 32 bytes) and maps errors by kind.
+//! what comes back (exactly 32 bytes, a generation of at least 1) and maps errors by
+//! kind. The foreign reason text is not passed on: [`KeyProviderError`] carries fixed
+//! reasons, and a foreign message can name paths or other detail.
 
-use crate::{DataKey, KeyVault, VaultError};
+use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
 
 /// A generation and its raw key bytes, as the foreign side returns them
 #[derive(uniffi::Record)]
@@ -53,7 +55,7 @@ pub trait ForeignKeyVault: Send + Sync {
     fn by_id(&self, generation: u32) -> Result<Vec<u8>, ForeignVaultError>;
 }
 
-/// A [`ForeignKeyVault`] used as a [`KeyVault`]
+/// A [`ForeignKeyVault`] used as a [`KeyProvider`]
 pub struct ForeignVaultAdapter {
     inner: Box<dyn ForeignKeyVault>,
 }
@@ -65,28 +67,51 @@ impl ForeignVaultAdapter {
     }
 }
 
-fn to_key(mut bytes: Vec<u8>) -> Result<DataKey, VaultError> {
+// the foreign store broke the contract (wrong length): asking again returns the same bytes
+fn to_key(mut bytes: Vec<u8>) -> Result<Key, KeyProviderError> {
     use zeroize::Zeroize;
-    let out = DataKey::from_slice(&bytes);
+    let out = Key::from_slice(&bytes).map_err(|_| {
+        KeyProviderError::Irrecoverable("the foreign key store returned a key that is not 32 bytes")
+    });
     bytes.zeroize();
     out
 }
 
-fn from_foreign(e: ForeignVaultError) -> VaultError {
-    match e {
-        ForeignVaultError::UnknownKey { generation } => VaultError::UnknownKey(generation),
-        ForeignVaultError::Unavailable { reason } => VaultError::Unavailable(reason),
-        ForeignVaultError::Irrecoverable { reason } => VaultError::Irrecoverable(reason),
-    }
-}
+const FOREIGN_UNAVAILABLE: &str = "the foreign key store cannot hand out keys now";
+const FOREIGN_IRRECOVERABLE: &str = "the foreign key store cannot recover this key";
 
-impl KeyVault for ForeignVaultAdapter {
-    fn current(&self) -> Result<(u32, DataKey), VaultError> {
-        let gk = self.inner.current().map_err(from_foreign)?;
+impl KeyProvider for ForeignVaultAdapter {
+    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
+        let gk = self.inner.current().map_err(|e| match e {
+            // there is no current key yet: nothing to open, a later call may find one
+            ForeignVaultError::UnknownKey { .. } | ForeignVaultError::Unavailable { .. } => {
+                KeyProviderError::Unavailable(FOREIGN_UNAVAILABLE)
+            }
+            ForeignVaultError::Irrecoverable { .. } => {
+                KeyProviderError::Irrecoverable(FOREIGN_IRRECOVERABLE)
+            }
+        })?;
+        if gk.generation == 0 {
+            return Err(KeyProviderError::Irrecoverable(
+                "the foreign key store reported generation 0",
+            ));
+        }
         Ok((gk.generation, to_key(gk.key)?))
     }
 
-    fn by_id(&self, generation: u32) -> Result<DataKey, VaultError> {
-        to_key(self.inner.by_id(generation).map_err(from_foreign)?)
+    fn by_generation(&self, generation: KeyGeneration) -> Result<Key, KeyProviderError> {
+        if generation == 0 {
+            return Err(KeyProviderError::UnknownGeneration(0));
+        }
+        let bytes = self.inner.by_id(generation).map_err(|e| match e {
+            ForeignVaultError::UnknownKey { .. } => KeyProviderError::UnknownGeneration(generation),
+            ForeignVaultError::Unavailable { .. } => {
+                KeyProviderError::Unavailable(FOREIGN_UNAVAILABLE)
+            }
+            ForeignVaultError::Irrecoverable { .. } => {
+                KeyProviderError::Irrecoverable(FOREIGN_IRRECOVERABLE)
+            }
+        })?;
+        to_key(bytes)
     }
 }

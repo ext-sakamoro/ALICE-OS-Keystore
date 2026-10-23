@@ -56,7 +56,10 @@ fn a_32_byte_key_passes_through() {
 #[test]
 fn errors_keep_their_kind() {
     assert_eq!(
-        adapter(vec![9; 32], false).by_generation(5).unwrap_err(),
+        adapter(vec![9; 32], false)
+            .by_generation(5)
+            .err()
+            .expect("an error"),
         KeyProviderError::UnknownGeneration(5)
     );
     assert!(matches!(
@@ -82,7 +85,7 @@ fn generation_zero_never_reaches_the_foreign_side() {
     }
     let a = ForeignVaultAdapter::new(Box::new(Panics));
     assert_eq!(
-        a.by_generation(0).unwrap_err(),
+        a.by_generation(0).err().expect("an error"),
         KeyProviderError::UnknownGeneration(0)
     );
 }
@@ -156,7 +159,10 @@ impl ForeignKeyVault for Broken {
 #[test]
 fn an_irrecoverable_foreign_error_stays_irrecoverable_without_its_text() {
     let a = ForeignVaultAdapter::new(Box::new(Broken));
-    for e in [a.current().unwrap_err(), a.by_generation(1).unwrap_err()] {
+    for e in [
+        a.current().err().expect("an error"),
+        a.by_generation(1).err().expect("an error"),
+    ] {
         assert!(matches!(e, KeyProviderError::Irrecoverable(_)));
         assert!(!format!("{e} {e:?}").contains("/Users/someone"));
     }
