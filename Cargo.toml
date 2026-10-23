@@ -1,9 +1,9 @@
 [package]
 name = "alice-os-keystore"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "LicenseRef-Proprietary"
-description = "Data-encryption keys held by the operating system's key store (Secure Enclave and Keychain on Apple platforms), behind one KeyVault trait"
+description = "Data-encryption keys held by the operating system's key store (macOS Keychain; Secure Enclave and Keychain on Apple mobile platforms), served through the KeyProvider trait of alice-crypto"
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
 publish = false
 
@@ -12,13 +12,16 @@ crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
 default = []
-# UniFFI callback interface: a key store implemented in Swift / Kotlin is handed to Rust as a KeyVault
+# UniFFI callback interface: a key store implemented in Swift / Kotlin is handed to Rust as a KeyProvider
 uniffi = ["dep:uniffi"]
 
 [dependencies]
+# the key type (zeroed on drop) and the KeyProvider trait the stores implement; used under the
+# commercial license of the dual license
+alice-crypto = { git = "https://github.com/ext-sakamoro/ALICE-Crypto", rev = "878cf866e524b9f53099c8cdf6a8333e641fb39f", version = "0.6" }
 # OS entropy for MemoryVault::generate
 getrandom = "0.2"
-# key bytes are zeroed on drop
+# zeroing the bytes the OS store returns before they are dropped
 zeroize = "1"
 uniffi = { version = "=0.28.3", optional = true }
 
@@ -26,10 +29,19 @@ uniffi = { version = "=0.28.3", optional = true }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["termios", "fs"] }
 
+# macOS Keychain (generic password items in the login keychain)
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+core-foundation = "0.10"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 # the prompt tests drive the reader through a pseudo-terminal
+# the macOS Keychain tests read and remove items behind the store's back
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+security-framework = "3.7"
+
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { version = "1.1", features = ["termios", "pty", "fs"] }
 
