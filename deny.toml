@@ -7,7 +7,7 @@
 # whichever job runs second.
 # ALICE-SDF v1.7.7 (commit 52d26f9) の deny.toml を base に ALICE-Crypto 用に調整
 #
-# alice-os-keystore は MIT OR Apache-2.0、AGPL の依存は無いので license exception も無い
+# alice-os-keystore は LicenseRef-Proprietary (publish = false)、自分の crate は下の private の ignore で許可の一覧の外
 # sibling path dep はゼロ、alice-stubs action は no-op (stub 生成不要)
 
 [graph]
@@ -41,6 +41,8 @@ ignore = [
 # ---------------------------------------------------------------------------
 [licenses]
 version = 2
+# publish = false の crate (この crate と tools/uniffi-bindgen) の license は一覧で見ない
+private = { ignore = true }
 confidence-threshold = 0.8
 allow = [
     "MIT",

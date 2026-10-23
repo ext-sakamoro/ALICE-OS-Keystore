@@ -97,4 +97,4 @@ Each behaviour was first written as a failing test (the test commit does not com
 
 ## License
 
-MIT OR Apache-2.0. The default build depends only on MIT / Apache-2.0 crates. The optional `uniffi` feature pulls in UniFFI's crates, which are MPL-2.0 (file-level copyleft: changes to those files must be shared, the rest of the program is unaffected).
+Proprietary (`LicenseRef-Proprietary`, all rights reserved; see [LICENSE](LICENSE)). Commits made before the change to this licence stay under MIT OR Apache-2.0, the licence they were made under. The default build depends only on MIT / Apache-2.0 crates. The optional `uniffi` feature pulls in UniFFI's crates, which are MPL-2.0 (file-level copyleft: changes to those files must be shared, the rest of the program is unaffected).
