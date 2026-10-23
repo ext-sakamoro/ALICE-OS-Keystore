@@ -1,14 +1,8 @@
-//! The Windows and Linux key stores are not implemented yet. They must fail loudly, never
-//! hand out a key or report success.
+//! The Linux key store is not implemented yet. It must fail loudly, never hand out a key
+//! or report success.
 
 use alice_crypto::KeyProvider;
-use alice_os_keystore::desktop::{LinuxSecretServiceStore, WindowsDpapiStore};
-
-#[test]
-#[should_panic(expected = "not implemented")]
-fn windows_dpapi_is_a_gap() {
-    let _ = WindowsDpapiStore.by_generation(1);
-}
+use alice_os_keystore::desktop::LinuxSecretServiceStore;
 
 #[test]
 #[should_panic(expected = "not implemented")]
