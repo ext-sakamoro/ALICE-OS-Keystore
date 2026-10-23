@@ -27,6 +27,11 @@ on:
       - 'deny.toml'
       - 'scripts/audit_ignore_guard.py'
       - 'scripts/test_audit_ignore_guard.py'
+      - 'scripts/advisory_holds.toml'
+      - 'scripts/advisory_hold_guard.py'
+      - 'scripts/test_advisory_hold_guard.py'
+      - 'scripts/alice_local_registry.py'
+      - 'scripts/test_alice_local_registry.py'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
   pull_request:
@@ -38,6 +43,11 @@ on:
       - 'deny.toml'
       - 'scripts/audit_ignore_guard.py'
       - 'scripts/test_audit_ignore_guard.py'
+      - 'scripts/advisory_holds.toml'
+      - 'scripts/advisory_hold_guard.py'
+      - 'scripts/test_advisory_hold_guard.py'
+      - 'scripts/alice_local_registry.py'
+      - 'scripts/test_alice_local_registry.py'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
   schedule:
@@ -125,6 +135,15 @@ jobs:
 # the pinned toolchain expects and fails on a clean runner
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny
+
+      # the advisory ids ignored for a dated hold (scripts/advisory_holds.toml) stay exact:
+      # the held crate version, its direct dependents and the expiry are checked against
+      # Cargo.lock, and every held id must be in deny.toml (the guard's own tests first;
+      # the weekly schedule catches an expired hold even when nothing changes)
+      - name: Advisory hold guard (tests, then the holds)
+        run: |
+          python3 scripts/test_advisory_hold_guard.py
+          python3 scripts/advisory_hold_guard.py
 
       - name: Run cargo deny check all
         run: cargo deny --all-features check all

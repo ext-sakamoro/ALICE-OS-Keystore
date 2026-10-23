@@ -18,7 +18,11 @@ fn without_a_session_bus_every_call_is_unavailable() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{text}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // the child really ran (an empty filter would also succeed)
     assert!(text.contains("1 passed"), "{text}");
 }

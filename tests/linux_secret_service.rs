@@ -74,8 +74,14 @@ impl Service {
     fn put(&self, generation: &str, secret: &[u8]) {
         let ss = SecretService::connect(EncryptionType::Dh).unwrap();
         let c = ss.get_default_collection().unwrap();
-        c.create_item("test", attrs(&self.0, generation), secret, false, "application/octet-stream")
-            .unwrap();
+        c.create_item(
+            "test",
+            attrs(&self.0, generation),
+            secret,
+            false,
+            "application/octet-stream",
+        )
+        .unwrap();
     }
 
     fn remove(&self, generation: &str) {
@@ -216,7 +222,10 @@ fn duplicates_resolve_to_the_earliest_created_then_the_lowest_path_and_are_count
     let (g, k) = store.current().unwrap();
     assert_eq!(g, 1);
     assert_eq!(k.as_bytes().as_slice(), want.as_slice());
-    assert_eq!(store.by_generation(1).unwrap().as_bytes().as_slice(), want.as_slice());
+    assert_eq!(
+        store.by_generation(1).unwrap().as_bytes().as_slice(),
+        want.as_slice()
+    );
     assert_eq!(store.duplicate_count().unwrap(), 2);
     // the losing items are left in place
     assert_eq!(s.items().len(), 3);
@@ -245,12 +254,15 @@ fn creators_that_lose_a_race_return_the_winners_key() {
         });
         let want = s.chosen("1");
         assert!(
-            keys.iter().all(|(g, k)| *g == 1 && k.as_slice() == want.as_slice()),
+            keys.iter()
+                .all(|(g, k)| *g == 1 && k.as_slice() == want.as_slice()),
             "round {round}: {keys:?}"
         );
         if s.items().len() > 1 {
             assert_eq!(
-                LinuxSecretServiceStore::new(&s.0).duplicate_count().unwrap(),
+                LinuxSecretServiceStore::new(&s.0)
+                    .duplicate_count()
+                    .unwrap(),
                 s.items().len() - 1
             );
             return;

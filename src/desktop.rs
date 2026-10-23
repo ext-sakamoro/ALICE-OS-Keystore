@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `MacosKeychainStore` (macOS only) | implemented: login keychain, one generic password item per generation |
 //! | `WindowsDpapiStore` (Windows only) | implemented: one DPAPI-sealed file per generation under `%LOCALAPPDATA%` |
-//! | [`LinuxSecretServiceStore`] | not implemented: every call fails fast (`todo!`) |
+//! | `LinuxSecretServiceStore` (Linux only) | implemented: one Secret Service item per generation (duplicates from racing creators resolve to one) |
 //!
 //! The implemented stores share one model: one 32-byte random key per generation, each
 //! one item in the operating system's store, created once and never rewritten. `current`
@@ -12,12 +12,13 @@
 //! adds the next one; `by_generation` reports a missing item as `Irrecoverable` when a
 //! higher generation shows it existed, and as `UnknownGeneration` otherwise. Creating an
 //! item that already exists fails in the store itself, so two processes creating the same
-//! generation at once cannot both succeed: the loser reads the winner's item.
+//! generation at once cannot both succeed: the loser reads the winner's item. (The Secret
+//! Service cannot refuse a second item; there every reader chooses the same one, see the
+//! Linux store.)
 //!
-//! A store that is not implemented never hands out a key or reports success, so a
-//! desktop build never silently runs without a protected key.
 
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use crate::{Key, KeyGeneration, KeyProviderError};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -29,20 +30,13 @@ mod windows;
 #[cfg(windows)]
 pub use windows::WindowsDpapiStore;
 
-/// Linux Secret Service (not implemented)
-pub struct LinuxSecretServiceStore;
-
-impl KeyProvider for LinuxSecretServiceStore {
-    fn current(&self) -> Result<(KeyGeneration, Key), KeyProviderError> {
-        todo!("Linux Secret Service store not implemented")
-    }
-    fn by_generation(&self, _generation: KeyGeneration) -> Result<Key, KeyProviderError> {
-        todo!("Linux Secret Service store not implemented")
-    }
-}
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::LinuxSecretServiceStore;
 
 /// One operating system store holding one item per generation
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 trait GenerationItems {
     /// The generations present, in any order (names that are not canonical are left out)
     fn generations(&self) -> Result<Vec<KeyGeneration>, KeyProviderError>;
@@ -54,16 +48,16 @@ trait GenerationItems {
 
 /// How often one call re-reads the items when another process changed them meanwhile
 /// (each retry follows an item someone else added, so a retry is progress)
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 const ATTEMPTS: usize = 64;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 const CHANGING: KeyProviderError =
     KeyProviderError::Unavailable("the stored items kept changing during the call");
 
 /// The generation a name `<prefix><n><suffix>` stands for (`n` decimal without a leading
 /// zero, at least 1), `None` for any other name
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration> {
     let digits = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
     if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -72,17 +66,17 @@ fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration
     digits.parse().ok()
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn highest<S: GenerationItems>(s: &S) -> Result<Option<KeyGeneration>, KeyProviderError> {
     Ok(s.generations()?.into_iter().max())
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn fresh_key() -> Result<Key, KeyProviderError> {
     Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProviderError> {
     for _ in 0..ATTEMPTS {
         if let Some(max) = highest(s)? {
@@ -99,7 +93,7 @@ fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProv
     Err(CHANGING)
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderError> {
     for _ in 0..ATTEMPTS {
         let next = match highest(s)? {
@@ -115,7 +109,7 @@ fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderErro
     Err(CHANGING)
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn by_generation_of<S: GenerationItems>(
     s: &S,
     generation: KeyGeneration,

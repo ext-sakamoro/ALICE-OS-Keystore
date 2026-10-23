@@ -34,6 +34,10 @@ ignore = [
     "RUSTSEC-2025-0020",  # PyString::from_object buffer overflow (0.24.1+ で fix)
     "RUSTSEC-2026-0176",  # pyo3 nth/nth_back OOB (0.29 で fix)
     "RUSTSEC-2026-0177",  # pyo3 PyCFunction::new_closure Sync 欠落 (0.29 で fix)
+    # 期限付きの保留 (scripts/advisory_holds.toml、scripts/advisory_hold_guard.py が版と依存元と期限を確かめる)
+    "RUSTSEC-2026-0370",  # zvariant 5.15.1 unmaintained (zbus 5.19 via secret-service 5.2、Linux)
+    "RUSTSEC-2026-0371",  # zbus_names 4.3.5 unmaintained (同上)
+    "RUSTSEC-2026-0372",  # zvariant_derive 5.15.1 unmaintained (同上)
 ]
 
 # ---------------------------------------------------------------------------
