@@ -1,6 +1,6 @@
 #![no_main]
 //! Errors from a foreign key store keep their kind through the adapter, and the
-//! foreign reason text never reaches the error.
+//! reason is always one of the adapter's fixed strings, never the foreign text.
 
 use alice_os_keystore::ffi::{
     ForeignKeyVault, ForeignVaultAdapter, ForeignVaultError, GenerationKey,
@@ -75,12 +75,18 @@ fuzz_target!(|input: (u8, u32, u32, String)| {
             }
         }
     }
+    // the reason is one of the adapter's fixed strings, never the foreign text (comparing
+    // the whole reason: a short foreign text can be a substring of a fixed one)
+    const FIXED: [&str; 2] = [
+        "the foreign key store cannot hand out keys now",
+        "the foreign key store cannot recover this key",
+    ];
     for e in [current, by_gen] {
-        if reason.len() >= 4 {
-            assert!(
-                !format!("{e} {e:?}").contains(&reason),
-                "the foreign reason leaked"
-            );
+        match e {
+            KeyProviderError::Unavailable(why) | KeyProviderError::Irrecoverable(why) => {
+                assert!(FIXED.contains(&why), "reason {why:?} is not a fixed one");
+            }
+            _ => {}
         }
     }
 });

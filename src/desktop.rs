@@ -2,7 +2,7 @@
 //!
 //! | store | state |
 //! |---|---|
-//! | [`MacosKeychainStore`] (macOS only) | implemented: login keychain, one generic password item per generation |
+//! | `MacosKeychainStore` (macOS only) | implemented: login keychain, one generic password item per generation |
 //! | [`WindowsDpapiStore`] | not implemented: every call fails fast (`todo!`) |
 //! | [`LinuxSecretServiceStore`] | not implemented: every call fails fast (`todo!`) |
 //!

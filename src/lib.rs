@@ -7,7 +7,7 @@
 //!
 //! | platform | implementation | state |
 //! |---|---|---|
-//! | macOS | [`desktop::MacosKeychainStore`]: one generic password item per generation in the login keychain | implemented |
+//! | macOS | `desktop::MacosKeychainStore` (macOS only): one generic password item per generation in the login keychain | implemented |
 //! | iOS / iPadOS / visionOS | Swift `SecureEnclaveVault` (`apple/`): a Secure Enclave P-256 key wraps the DEK with ECIES, the wrapped blob lives in the Keychain (this device only) | implemented in Swift, reaches Rust through [`ffi::ForeignKeyVault`] |
 //! | Android | Keystore (Kotlin) through [`ffi::ForeignKeyVault`] | not yet |
 //! | Windows / Linux | [`desktop`] | not yet: fails fast |
