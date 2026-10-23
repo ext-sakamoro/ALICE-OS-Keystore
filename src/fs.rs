@@ -1,4 +1,4 @@
-//! Swapping two directories in one step
+//! Swapping two paths in one step
 //!
 //! An application that replaces a directory holding its keys and data (restoring
 //! a backup) needs the replacement to be all or nothing: if the process stops
@@ -9,6 +9,12 @@
 //! [`ExchangeError::Unsupported`] without touching anything, so the caller
 //! chooses a fallback it can recover from (for example a marker file and two
 //! renames).
+//!
+//! Any two entries swap, not only directories (a directory and a file change
+//! places too). A symbolic link is swapped itself; it is not followed. Passing the
+//! same path twice succeeds and changes nothing. Both paths must be on the same
+//! file system: otherwise the call fails (`EXDEV`, as [`ExchangeError::Io`]) and
+//! nothing changes.
 //!
 //! The swap itself does not make the new names durable: after a successful call,
 //! sync the parent directory if a crash right afterwards must not undo it.
@@ -45,7 +51,9 @@ impl std::error::Error for ExchangeError {
     }
 }
 
-/// Swaps the paths `a` and `b` (both must exist) in one atomic step.
+/// Swaps the paths `a` and `b` (both must exist, on the same file system) in one
+/// atomic step: directories, files or symbolic links (a link is not followed);
+/// the same path twice is a successful no-op.
 ///
 /// # Errors
 ///

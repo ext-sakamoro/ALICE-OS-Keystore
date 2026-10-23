@@ -38,7 +38,7 @@ let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is
 
 ### Replacing a directory all or nothing
 
-`fs::exchange(a, b)` swaps two existing directories in one step on Linux and Apple platforms, so a process stopped halfway leaves either the old or the new directory, never a mix. On other platforms it returns `Unsupported` and changes nothing. Sync the parent directory afterwards if a crash must not undo the swap.
+`fs::exchange(a, b)` swaps two existing paths in one step on Linux and Apple platforms, so a process stopped halfway leaves either the old or the new directory, never a mix. Any two entries swap (a directory and a file too), a symbolic link is swapped itself and not followed, the same path twice succeeds and changes nothing, and paths on different file systems are refused (`EXDEV`) without changing anything. On other platforms it returns `Unsupported` and changes nothing. Sync the parent directory afterwards if a crash must not undo the swap.
 
 ### Unsafe code
 

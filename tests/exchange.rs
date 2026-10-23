@@ -1,4 +1,4 @@
-//! Swapping two directories in one step
+//! Swapping two paths in one step
 //!
 //! On Linux and Apple platforms the two paths change places atomically: an
 //! observer sees either both old or both new, never one missing. Elsewhere the
@@ -53,6 +53,58 @@ fn a_missing_path_is_an_error_and_nothing_moves() {
     assert!(matches!(r, Err(ExchangeError::Io(_))), "{r:?}");
     assert_eq!(read(&a, "f"), "kept");
     assert!(!root.join("absent").exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+#[test]
+fn the_same_path_twice_succeeds_and_changes_nothing() {
+    let root = dir("same");
+    let a = root.join("a");
+    std::fs::create_dir(&a).unwrap();
+    put(&a, "f", "kept");
+    exchange(&a, &a).unwrap();
+    assert_eq!(read(&a, "f"), "kept");
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+}
+
+/// Any two entries swap, not only directories: a directory and a file change places
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+#[test]
+fn a_directory_and_a_file_change_places() {
+    let root = dir("mixed");
+    let d = root.join("d");
+    let f = root.join("f");
+    std::fs::create_dir(&d).unwrap();
+    put(&d, "inner", "in the directory");
+    std::fs::write(&f, "a file").unwrap();
+    exchange(&d, &f).unwrap();
+    assert_eq!(std::fs::read_to_string(&d).unwrap(), "a file");
+    assert_eq!(read(&f, "inner"), "in the directory");
+}
+
+/// A symbolic link is swapped itself, not the entry it points to
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+#[test]
+fn a_symbolic_link_is_swapped_not_followed() {
+    let root = dir("link");
+    let target = root.join("target");
+    let link = root.join("link");
+    let other = root.join("other");
+    std::fs::create_dir(&target).unwrap();
+    put(&target, "t", "target");
+    std::fs::create_dir(&other).unwrap();
+    put(&other, "o", "other");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    exchange(&link, &other).unwrap();
+    // `other` is now the link, `link` the directory that was `other`; the target is untouched
+    assert!(std::fs::symlink_metadata(&other)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_link(&other).unwrap(), target);
+    assert_eq!(read(&link, "o"), "other");
+    assert!(std::fs::symlink_metadata(&target).unwrap().is_dir());
+    assert_eq!(read(&target, "t"), "target");
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]

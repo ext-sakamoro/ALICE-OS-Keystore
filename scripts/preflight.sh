@@ -340,14 +340,14 @@ fi
 step "ci.yml / test: Test (default features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=2; fi
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=5; fi
   scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,read_secret="$read_min",exchange="$swap_min" -- cargo test
 )
 
 step "ci.yml / test: Test (all features)"
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=2; fi
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; else read_min=10; swap_min=5; fi
   scripts/run_tests.sh vault_oracle=10,desktop_gaps=3,foreign_oracle=5,read_secret="$read_min",exchange="$swap_min" -- cargo test --all-features
 )
 
