@@ -36,6 +36,10 @@ let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is
 
 `prompt::read_secret` writes the prompt to standard error and reads one line from standard input with the terminal's echo turned off, then restores the terminal's previous mode on every way out (a line read, an error, a panic). Standard input that is not a terminal is refused (`NotATerminal`) before anything is written, so a program that also accepts the secret from an environment variable chooses that path on purpose. An empty line (`Empty`), a line longer than 512 bytes (`TooLong`) and an input that ends early (`Closed`) are separate errors. The line is read into a fixed buffer that never grows, and the returned string is zeroed on drop.
 
+### Replacing a directory all or nothing
+
+`fs::exchange(a, b)` swaps two existing directories in one step on Linux and Apple platforms, so a process stopped halfway leaves either the old or the new directory, never a mix. On other platforms it returns `Unsupported` and changes nothing. Sync the parent directory afterwards if a crash must not undo the swap.
+
 ### Unsafe code
 
 `unsafe` code is allowed only in `src/sys/`, the module that makes the operating system calls (today the Windows console mode; the desktop key stores go there when they are implemented). Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI and by `scripts/preflight.sh`) fails on any `unsafe` outside `src/sys/`. On unix the terminal is controlled through `rustix`'s safe API.

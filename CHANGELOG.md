@@ -8,6 +8,7 @@
 
 ### Added
 
+- `fs::exchange`: swap two directories in one atomic step (Linux `renameat2` `RENAME_EXCHANGE`, Apple `renameatx_np` `RENAME_SWAP`, through `rustix`'s safe API), for replacing a directory of keys and data all or nothing. Other platforms return `ExchangeError::Unsupported` without changing anything, so the caller picks a fallback it can recover from
 - `prompt::read_secret` / `read_secret_from`: read a secret from a terminal with echo off (unix: termios through `rustix`, Windows: console mode), restoring the terminal's mode on every exit path. A non-terminal input is refused before anything is written (`PromptError::NotATerminal`); an empty line, a line longer than `prompt::MAX_SECRET_LEN` (512 bytes), input that ends early and non-UTF-8 input are separate errors. The line is read into a fixed buffer and returned in zeroizing memory
 - `KeyVault` (data keys by generation), `DataKey` (zeroed on drop, not printed), `VaultError` (`UnknownKey` / `Unavailable` / `InvalidKeyLength`)
 - `MemoryVault`: keys in memory only, for tests and ephemeral data
