@@ -129,3 +129,8 @@ jobs:
       # workflow's pull_request paths, the gate job needs every job
       - run: python3 scripts/test_changed_paths.py
       - run: python3 scripts/changed_paths.py sync
+      # the tests of the packaging script (package-integrity.yml is dormant, dispatch only; its
+      # script is tested on every run here, with the real cargo on fixture repositories)
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tests of scripts/alice_local_registry.py
+        run: python3 scripts/test_alice_local_registry.py

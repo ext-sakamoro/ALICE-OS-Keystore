@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev 1b563e76c714322805da6ab0ee49067c0f72a93c
+# generator rev 7b9601a9abf759ed04c7dc9bf2ebd404323370c7
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -247,7 +247,7 @@ step() { printf '\n\033[1;34m== %s\033[0m\n' "$*"; }
 # touching the crate roots invalidates only this repo's fingerprints.
 relint() { git ls-files | grep -E '(^|/)src/(lib|main)\.rs$' | xargs -r touch; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; exit 1; }; }
-has_toolchain() { rustup toolchain list | grep -q "^$1"; }
+has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
 #   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
@@ -304,6 +304,9 @@ step "ci.yml / scripts: run"
 
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/changed_paths.py sync )
+
+step "ci.yml / scripts: Tests of scripts/alice_local_registry.py"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_alice_local_registry.py )
 
 step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
 ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo fetch --locked )
@@ -390,12 +393,6 @@ step "security-audit.yml / stub-guard: Detect TODO / FIXME / XXX / HACK (informa
     echo "✓ No TODO/FIXME/XXX/HACK in src/"
   fi
 )
-
-step "security-audit.yml / package-integrity: Tests of scripts/alice_local_registry.py"
-( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; python3 scripts/test_alice_local_registry.py )
-
-step "security-audit.yml / package-integrity: cargo package (local registry の alice-*) と展開した .crate の隔離 build"
-( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; python3 scripts/alice_local_registry.py )
 
 step "fuzz.yml / fuzz: Build fuzz target [target=fuzz_foreign_key_bytes]"
 if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
