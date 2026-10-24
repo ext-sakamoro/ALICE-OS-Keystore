@@ -20,23 +20,6 @@ on:
   push:
     # `ci/**` runs the same checks on a branch before it is fast-forwarded onto main
     branches: [main, 'ci/**']
-  pull_request:
-    branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'src/**'
-      - 'deny.toml'
-      - 'scripts/audit_ignore_guard.py'
-      - 'scripts/test_audit_ignore_guard.py'
-      - 'scripts/advisory_holds.toml'
-      - 'scripts/advisory_hold_guard.py'
-      - 'scripts/test_advisory_hold_guard.py'
-      - 'scripts/alice_local_registry.py'
-      - 'scripts/test_alice_local_registry.py'
-      - '.github/workflows/security-audit.yml'
-      - '.github/actions/**'
-      - '.github/paths/security-audit.txt'
   schedule:
     # 毎週月曜 09:00 UTC = 18:00 JST
     - cron: '0 9 * * 1'
