@@ -12,8 +12,6 @@ on:
   push:
     # `ci/**` runs the same checks on a branch before it is fast-forwarded onto main
     branches: [main, 'ci/**']
-  pull_request:
-    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
