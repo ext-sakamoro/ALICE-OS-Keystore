@@ -18,17 +18,11 @@ name: Security & Hygiene
 
 on:
   push:
+    # no paths here: a branch created at a SHA another ref already has gets an empty
+    # diff from GitHub's filter and the run is skipped; the changes job below compares
+    # with merge-base(origin/main) instead (patterns: .github/paths/security-audit.txt)
     # `ci/**` runs the same checks on a branch before it is fast-forwarded onto main
     branches: [main, 'ci/**']
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'src/**'
-      - 'deny.toml'
-      - 'scripts/audit_ignore_guard.py'
-      - 'scripts/test_audit_ignore_guard.py'
-      - '.github/workflows/security-audit.yml'
-      - '.github/actions/**'
   pull_request:
     branches: [main]
     paths:
@@ -40,6 +34,8 @@ on:
       - 'scripts/test_audit_ignore_guard.py'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
+      - 'scripts/changed_paths.py'
+      - '.github/paths/security-audit.txt'
   schedule:
     # 毎週月曜 09:00 UTC = 18:00 JST
     - cron: '0 9 * * 1'
@@ -55,8 +51,39 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  # which files changed: a new or force-pushed branch is compared with merge-base(origin/main),
+  # another push with before..after, a pull request with base...head; schedule and manual
+  # runs always run; any error runs (fail-closed) — scripts/changed_paths.py
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after || github.sha }}
+          CREATED: ${{ github.event.created }}
+          FORCED: ${{ github.event.forced }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 scripts/changed_paths.py decide --event "$EVENT"
+          --before "$BEFORE" --after "$AFTER" --created "$CREATED" --forced "$FORCED"
+          --base "$PR_BASE" --head "$PR_HEAD"
+          --patterns-file .github/paths/security-audit.txt
+
   audit:
     name: cargo audit (RustSec CVE scan)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,6 +126,8 @@ jobs:
             --ignore RUSTSEC-2026-0374
 
   tools-audit:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # the binding generator's own lock (build-time tool, not linked into the library):
     # reported, not gating, since its advisory is the one above
     name: cargo audit (tools/uniffi-bindgen, informational)
@@ -113,6 +142,8 @@ jobs:
 
   deny:
     name: cargo-deny (license + advisories + bans + sources)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,7 +153,7 @@ jobs:
       # EmbarkStudios/cargo-deny-action@v2 は Docker container 内で稼働し、
       # /github/workspace のみ mount するため sibling path dep が見えず fail する
       # Installed directly: the install action resolves a different version than
-# the pinned toolchain expects and fails on a clean runner
+      # the pinned toolchain expects and fails on a clean runner
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny
 
@@ -131,6 +162,8 @@ jobs:
 
   unused-deps:
     name: cargo-machete (unused dependencies)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -141,6 +174,8 @@ jobs:
 
   stub-guard:
     name: Stub / mock / dbg guard (grep)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -206,6 +241,8 @@ jobs:
 
   package-integrity:
     name: Package integrity (publish される .crate が build できるか)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -243,6 +280,8 @@ jobs:
 
   coverage:
     name: Coverage (cargo-llvm-cov、informational)
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -272,3 +311,17 @@ jobs:
           name: coverage-summary
           path: coverage-summary.txt
           retention-days: 30
+
+  # red when the changes job said run and a job was skipped, cancelled or failed
+  gate:
+    name: Gate
+    if: always()
+    needs: [changes, audit, tools-audit, deny, unused-deps, stub-guard, package-integrity, coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/changed_paths.py gate --needs-json "$NEEDS"

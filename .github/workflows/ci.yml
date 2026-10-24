@@ -117,3 +117,8 @@ jobs:
       # unsafe code only in src/sys/, each block with a SAFETY note (the checker's own tests first)
       - run: python3 scripts/test_unsafe_scope_check.py
       - run: python3 scripts/unsafe_scope_check.py
+      # scripts/changed_paths.py decides whether the path-filtered workflows run (its own
+      # tests), then the trigger lint: no on.push paths off main, each pattern file equals its
+      # workflow's pull_request paths, the gate job needs every job
+      - run: python3 scripts/test_changed_paths.py
+      - run: python3 scripts/changed_paths.py sync

@@ -6,6 +6,7 @@
 
 - License: the crate is now proprietary (`LicenseRef-Proprietary`, all rights reserved, see `LICENSE`), and so is the binding generator in `tools/uniffi-bindgen`. `LICENSE-MIT` and `LICENSE-APACHE` are removed; commits made before this change stay under MIT OR Apache-2.0, the licence they were made under. `deny.toml` no longer checks the licence of the repository's own unpublished crates (`private = { ignore = true }`); dependencies are checked against the same allow list as before.
 - Unsafe code policy: the crate no longer forbids `unsafe` everywhere. It denies it everywhere except one private module, `src/sys/`, which holds the operating system calls (each `unsafe` block with a `SAFETY:` note). `scripts/unsafe_scope_check.py` (CI and preflight) fails on any `unsafe` outside it. Reading a secret on a Windows console needs these calls; the desktop key stores will use the same module
+- CI: `fuzz.yml` and `security-audit.yml` no longer filter `on.push` by paths. A `changes` job (`scripts/changed_paths.py`, the same bytes as ALICE-Crypto's, patterns in `.github/paths/<workflow>.txt`) decides whether the jobs run, comparing a new branch with its merge base on main, and a `gate` job fails when a job that should have run did not. Before, the first push of a new `ci/**` branch whose head commit touched none of the paths created no run. `ci.yml` (scripts job) and the preflight run `scripts/test_changed_paths.py` and `scripts/changed_paths.py sync`
 
 ### Added
 

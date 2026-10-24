@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev fd42953c41f24e7bf3d7a247f664f39c6330c79d
+# generator rev c84572cedd2730e8932b4a6959c59c2bfb7877ea
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -250,10 +250,13 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
+#   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
 #   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, needs network / runner-only)
 #   - security-audit.yml:tools-audit:Run cargo audit on the tool's lock (continue-on-error, no count guard for cargo audit)
 #   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
+#   - security-audit.yml:gate:gate (reads NEEDS, a value only the runner has)
+#   - fuzz.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_key_bytes] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_key_bytes] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (runner-only (open-ended or unprovable-bounded fuzz run))
@@ -263,6 +266,7 @@ has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 #   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_foreign_errors] (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_foreign_errors] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_errors] (runner-only (open-ended or unprovable-bounded fuzz run))
+#   - fuzz.yml:gate:gate (reads NEEDS, a value only the runner has)
 
 need cargo-audit "cargo install cargo-audit --locked"
 need cargo-deny "cargo install cargo-deny --locked"
@@ -290,6 +294,12 @@ step "ci.yml / scripts: run"
 
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/unsafe_scope_check.py )
+
+step "ci.yml / scripts: run"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_changed_paths.py )
+
+step "ci.yml / scripts: run"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/changed_paths.py sync )
 
 step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
 ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo fetch --locked )
