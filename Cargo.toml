@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 license = "LicenseRef-Proprietary"
 description = "Data-encryption keys held by the operating system's key store (macOS Keychain; Secure Enclave and Keychain on Apple mobile platforms), served through the KeyProvider trait of alice-crypto"
-authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
+authors = ["Moroya Sakamoto"]
 publish = false
 
 [lib]
