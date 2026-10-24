@@ -1,7 +1,7 @@
 name: Keychain sweep stress
 
-# probe for one branch only (never landed): the macOS Keychain tests 20 times in a row on the
-# runner, each run a fresh process as the suite runs in CI; every run must pass all 18
+# probe for one branch only (never landed): the macOS Keychain tests run in a row on the
+# runner (200 times), each run a fresh process as the suite runs in CI; every run must pass all 18
 on:
   push:
     branches: ["probe/20261024-keystore-lock-stress", "probe/20261024-keystore-lock-mutant"]
@@ -15,24 +15,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build the test binary
         run: cargo test --all-features --test macos_keychain --no-run
-      - name: 20 runs
+      - name: 200 runs
         run: |
           set -u
           pass=0
-          for i in $(seq 1 20); do
+          hung=0
+          for i in $(seq 1 200); do
             log="$RUNNER_TEMP/run-$i.log"
             cargo test --all-features --test macos_keychain >"$log" 2>&1 &
             pid=$!
             waited=0
-            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 2; waited=$((waited + 2)); done
+            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 60 ]; do sleep 2; waited=$((waited + 2)); done
             if kill -0 "$pid" 2>/dev/null; then
-              echo "run $i: still running after 300 s"
+              hung=$((hung + 1))
+              echo "run $i: still running after 60 s"
               cat "$log"
               ps -axo pid,ppid,etime,command | grep -E 'macos_keychain|alice-os-keystore|security' | grep -v grep || true
               for t in $(pgrep -f 'deps/macos_keychain-'); do echo "== sample $t"; sample "$t" 5 2>&1 | head -200; done
               pkill -f 'deps/macos_keychain-' || true
               kill "$pid" 2>/dev/null || true
               wait "$pid" 2>/dev/null || true
+              [ "$hung" -ge 3 ] && break
               continue
             fi
             wait "$pid" || true
@@ -43,5 +46,5 @@ jobs:
               echo "run $i:"; grep -E 'panicked|FAILED|test result' "$log" | head -10
             fi
           done
-          echo "macos_keychain: ${pass}/20 runs passed all 18"
-          [ "$pass" -eq 20 ]
+          echo "macos_keychain: ${pass}/${i} runs passed all 18, ${hung} hung"
+          [ "$pass" -eq 200 ]
