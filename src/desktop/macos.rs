@@ -13,6 +13,14 @@
 //! another program (or a rebuilt one with a different signature) gets the system's
 //! "allow access" dialog, and a refusal is [`KeyProviderError::Unavailable`].
 //!
+//! Every call into the Security framework, including the release of the objects it hands
+//! back, runs under one lock for the whole process: the file-based keychain can deadlock
+//! inside the framework when one thread adds an item while another searches or deletes
+//! (seen on macOS 26, every thread waiting on the framework's own mutexes). Calls are
+//! therefore serialised within a process, and another library in the same process that
+//! calls the framework on its own is outside that guarantee. Processes are not serialised:
+//! two processes agree on a generation through `SecItemAdd` refusing a duplicate.
+//!
 //! The key bytes the Security framework hands back are copied into the [`Key`] (zeroed on
 //! drop) and the returned buffer is zeroed. Copies the framework makes on its own side
 //! are outside this crate's reach.
@@ -34,6 +42,19 @@ const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
 
 const KEY_PREFIX: &str = "gen-";
 const MARKER_PREFIX: &str = "issued-";
+
+static KEYCHAIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run `f` holding the process-wide lock of the Security framework calls (see the module
+/// doc); for tests that reach the keychain directly next to the store. `f` must not call
+/// the store (the lock is not reentrant)
+#[doc(hidden)]
+pub fn keychain_serialized<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = KEYCHAIN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    f()
+}
 
 /// Keys kept in the macOS login keychain, one item per generation
 pub struct MacosKeychainStore {
@@ -86,16 +107,37 @@ impl MacosKeychainStore {
         item.set_service(&self.service)
             .set_account_name(account)
             .set_label(format!("{} {account}", self.service));
-        match item.add() {
+        keychain_serialized(|| match item.add() {
             Ok(()) => Ok(true),
             Err(e) if e.code() == ERR_SEC_DUPLICATE_ITEM => Ok(false),
             Err(e) => Err(unavailable(e)),
-        }
+        })
     }
 }
 
 impl GenerationItems for MacosKeychainStore {
     fn inventory(&self) -> Result<Inventory, KeyProviderError> {
+        // the search results are released inside the lock too
+        keychain_serialized(|| self.inventory_unlocked())
+    }
+
+    fn read(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
+        keychain_serialized(|| self.read_unlocked(generation))
+    }
+
+    fn create(&self, generation: KeyGeneration, key: &Key) -> Result<bool, KeyProviderError> {
+        self.add(&format!("{KEY_PREFIX}{generation}"), key.as_bytes())
+    }
+
+    fn mark(&self, generation: KeyGeneration) -> Result<(), KeyProviderError> {
+        // the marker holds no secret; its presence is the record
+        self.add(&format!("{MARKER_PREFIX}{generation}"), b"issued")
+            .map(|_| ())
+    }
+}
+
+impl MacosKeychainStore {
+    fn inventory_unlocked(&self) -> Result<Inventory, KeyProviderError> {
         let found = ItemSearchOptions::new()
             .class(ItemClass::generic_password())
             .service(&self.service)
@@ -121,7 +163,7 @@ impl GenerationItems for MacosKeychainStore {
         Ok(inv)
     }
 
-    fn read(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
+    fn read_unlocked(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
         match get_generic_password(&self.service, &format!("{KEY_PREFIX}{generation}")) {
             Ok(mut bytes) => {
                 let key = Key::from_slice(&bytes).map_err(|_| {
@@ -135,15 +177,6 @@ impl GenerationItems for MacosKeychainStore {
         }
     }
 
-    fn create(&self, generation: KeyGeneration, key: &Key) -> Result<bool, KeyProviderError> {
-        self.add(&format!("{KEY_PREFIX}{generation}"), key.as_bytes())
-    }
-
-    fn mark(&self, generation: KeyGeneration) -> Result<(), KeyProviderError> {
-        // the marker holds no secret; its presence is the record
-        self.add(&format!("{MARKER_PREFIX}{generation}"), b"issued")
-            .map(|_| ())
-    }
 }
 
 impl KeyProvider for MacosKeychainStore {

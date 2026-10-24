@@ -28,6 +28,9 @@ use crate::{Key, KeyGeneration, KeyProviderError};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use macos::keychain_serialized;
+#[cfg(target_os = "macos")]
 pub use macos::MacosKeychainStore;
 
 #[cfg(windows)]
