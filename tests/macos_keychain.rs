@@ -21,11 +21,26 @@
 #![cfg(target_os = "macos")]
 
 use alice_crypto::{KeyProvider, KeyProviderError};
-use alice_os_keystore::desktop::MacosKeychainStore;
+use alice_os_keystore::desktop::{keychain_serialized, MacosKeychainStore};
+use security_framework::base::Error as SecError;
 use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
-use security_framework::passwords::{
-    delete_generic_password, get_generic_password, set_generic_password,
-};
+use security_framework::passwords;
+
+// The direct Security.framework calls below take the store's process-wide lock, as the store
+// does for its own: the file-based keychain can deadlock inside the framework when threads of
+// one process add, search and delete at once
+
+fn get_generic_password(service: &str, account: &str) -> Result<Vec<u8>, SecError> {
+    keychain_serialized(|| passwords::get_generic_password(service, account))
+}
+
+fn set_generic_password(service: &str, account: &str, data: &[u8]) -> Result<(), SecError> {
+    keychain_serialized(|| passwords::set_generic_password(service, account, data))
+}
+
+fn delete_generic_password(service: &str, account: &str) -> Result<(), SecError> {
+    keychain_serialized(|| passwords::delete_generic_password(service, account))
+}
 
 const PREFIX: &str = "alice-os-keystore-test.";
 
@@ -44,11 +59,13 @@ fn now_nanos() -> u128 {
 /// test is about; it can fail or miss items while other tests add and delete theirs, so nothing
 /// relies on what it finds, and the sweep never searches this way
 fn wide_search() {
-    let _ = ItemSearchOptions::new()
-        .class(ItemClass::generic_password())
-        .load_attributes(true)
-        .limit(Limit::All)
-        .search();
+    keychain_serialized(|| {
+        let _ = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search();
+    });
 }
 
 /// The services among `names` that belong to a test run older than `max_age` at `now`
@@ -80,17 +97,22 @@ fn select_stale(names: &[String], now: u128, max_age: std::time::Duration) -> Ve
 
 /// The accounts the keychain holds under `service`, sorted (a search filtered by the service)
 fn accounts_of(service: &str) -> Vec<String> {
-    let found = ItemSearchOptions::new()
-        .class(ItemClass::generic_password())
-        .service(service)
-        .load_attributes(true)
-        .limit(Limit::All)
-        .search();
+    let found = keychain_serialized(|| {
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(service)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|r| r.simplify_dict()?.get("acct").cloned())
+                    .collect::<Vec<String>>()
+            })
+    });
     let mut accounts: Vec<String> = match found {
-        Ok(items) => items
-            .iter()
-            .filter_map(|r| r.simplify_dict()?.get("acct").cloned())
-            .collect(),
+        Ok(accounts) => accounts,
         Err(e) if e.code() == -25300 => Vec::new(), // errSecItemNotFound
         Err(e) => panic!("keychain search failed: {e}"),
     };
