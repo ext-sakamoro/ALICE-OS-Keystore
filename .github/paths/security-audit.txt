@@ -1,0 +1,20 @@
+# the paths that run .github/workflows/security-audit.yml (scripts/changed_paths.py decide)
+# on.pull_request.paths of the workflow must list the same patterns in the same order
+# (scripts/changed_paths.py sync)
+# every file that can change a job's result is listed: a missing one skips the job on a
+# change that alters it
+Cargo.toml
+Cargo.lock
+src/**
+deny.toml
+scripts/audit_ignore_guard.py
+scripts/test_audit_ignore_guard.py
+scripts/advisory_holds.toml
+scripts/advisory_hold_guard.py
+scripts/test_advisory_hold_guard.py
+scripts/alice_local_registry.py
+scripts/test_alice_local_registry.py
+.github/workflows/security-audit.yml
+.github/actions/**
+scripts/changed_paths.py
+.github/paths/security-audit.txt
