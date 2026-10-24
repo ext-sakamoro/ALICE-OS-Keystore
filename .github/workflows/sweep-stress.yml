@@ -4,7 +4,7 @@ name: Keychain sweep stress
 # runner, each run a fresh process as the suite runs in CI; every run must pass all 18
 on:
   push:
-    branches: ["probe/20261024-keystore-sweep-stress"]
+    branches: ["probe/20261024-keystore-lock-stress", "probe/20261024-keystore-lock-mutant"]
 
 jobs:
   stress:
