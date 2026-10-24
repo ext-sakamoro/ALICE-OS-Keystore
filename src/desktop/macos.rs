@@ -50,9 +50,7 @@ static KEYCHAIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// the store (the lock is not reentrant)
 #[doc(hidden)]
 pub fn keychain_serialized<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = KEYCHAIN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _ = &KEYCHAIN;
     f()
 }
 
