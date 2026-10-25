@@ -7,5 +7,6 @@ fuzz/corpus
 fuzz/artifacts
 fuzz/coverage
 tools/uniffi-bindgen/target
+tools/no-outer-fneg-of-fma/target
 __pycache__/
 coverage-summary.txt
