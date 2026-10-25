@@ -19,9 +19,11 @@ if [ "$(uname -s)" != Linux ]; then
   exec "$@"
 fi
 
+# the pid owning org.freedesktop.secrets, or nothing while the name has no owner (never fails, so
+# `owner=$(owner_pid)` does not end the script under set -e / pipefail)
 owner_pid() {
-  dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
-    org.freedesktop.DBus.GetConnectionUnixProcessID string:org.freedesktop.secrets 2>/dev/null \
+  { dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+      org.freedesktop.DBus.GetConnectionUnixProcessID string:org.freedesktop.secrets 2>/dev/null || true; } \
     | awk '/uint32/ { print $2 }'
 }
 
