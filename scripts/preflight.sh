@@ -251,6 +251,7 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
 #   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
+#   - ci.yml:scripts:Install gnome-keyring (with_keyring.sh tests) (no cargo / grep)
 #   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
 #   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, needs network / runner-only)
@@ -291,6 +292,9 @@ step "ci.yml / doc: run"
 
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_run_tests.py )
+
+step "ci.yml / scripts: run"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_with_keyring.py )
 
 step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_unsafe_scope_check.py )

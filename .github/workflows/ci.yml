@@ -115,12 +115,18 @@ jobs:
       - run: scripts/apple_check.sh
 
   scripts:
-    name: scripts (run_tests.sh, unsafe scope)
+    name: scripts (run_tests.sh, with_keyring.sh, unsafe scope)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 scripts/test_run_tests.py
+      # the keyring wrapper against a real gnome-keyring: a daemon that exits during a command
+      # fails the run and is not replaced by activation (each also checked against a copy of the
+      # script without that safeguard)
+      - name: Install gnome-keyring (with_keyring.sh tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gnome-keyring dbus
+      - run: python3 scripts/test_with_keyring.py
       # unsafe code only in src/sys/, each block with a SAFETY note (the checker's own tests first)
       - run: python3 scripts/test_unsafe_scope_check.py
       - run: python3 scripts/unsafe_scope_check.py
