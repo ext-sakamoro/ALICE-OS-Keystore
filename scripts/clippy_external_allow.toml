@@ -1,0 +1,15 @@
+# Public functions of the external modules and types clippy.toml names that are allowed, each with a
+# reason (scripts/clippy_external_coverage.py): every public function of a named module or type must be
+# banned in clippy.toml or listed here.
+
+[[allow]]
+path = "alice_crypto::Key::as_bytes"
+reason = "reads the bytes of a key the caller already holds; no entropy and no clock"
+
+[[allow]]
+path = "alice_crypto::Key::from_bytes"
+reason = "wraps 32 bytes the caller supplies; deterministic in its input"
+
+[[allow]]
+path = "alice_crypto::Key::from_slice"
+reason = "wraps a 32-byte slice the caller supplies, refusing another length; deterministic in its input"
