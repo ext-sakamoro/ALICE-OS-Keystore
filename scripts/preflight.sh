@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev 53b5498bfca8e6d099032eaee5ccb99ec580b7b3
+# generator rev 9c55559df3342be2b5c81b4d8999f394021b7276
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -394,6 +394,13 @@ step "security-audit.yml / package-integrity: Tests of scripts/alice_local_regis
 step "security-audit.yml / package-integrity: cargo package (local registry の alice-*) と展開した .crate の隔離 build"
 ( export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; python3 scripts/alice_local_registry.py )
 
+step "fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_foreign_key_bytes]"
+if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
+  ( export CARGO_TERM_COLOR="always"; cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null )
+else
+  echo 'PREFLIGHT-SKIP: fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_foreign_key_bytes]: nightly / cargo-fuzz not installed' >&2
+fi
+
 step "fuzz.yml / fuzz: Build fuzz target [target=fuzz_foreign_key_bytes]"
 if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
   (
@@ -405,6 +412,13 @@ else
   echo 'PREFLIGHT-SKIP: fuzz.yml / fuzz: Build fuzz target [target=fuzz_foreign_key_bytes]: nightly / cargo-fuzz not installed' >&2
 fi
 
+step "fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_memory_vault_ops]"
+if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
+  ( export CARGO_TERM_COLOR="always"; cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null )
+else
+  echo 'PREFLIGHT-SKIP: fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_memory_vault_ops]: nightly / cargo-fuzz not installed' >&2
+fi
+
 step "fuzz.yml / fuzz: Build fuzz target [target=fuzz_memory_vault_ops]"
 if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
   (
@@ -414,6 +428,13 @@ if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
   )
 else
   echo 'PREFLIGHT-SKIP: fuzz.yml / fuzz: Build fuzz target [target=fuzz_memory_vault_ops]: nightly / cargo-fuzz not installed' >&2
+fi
+
+step "fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_foreign_errors]"
+if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
+  ( export CARGO_TERM_COLOR="always"; cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null )
+else
+  echo 'PREFLIGHT-SKIP: fuzz.yml / fuzz: fuzz/Cargo.lock is current [target=fuzz_foreign_errors]: nightly / cargo-fuzz not installed' >&2
 fi
 
 step "fuzz.yml / fuzz: Build fuzz target [target=fuzz_foreign_errors]"

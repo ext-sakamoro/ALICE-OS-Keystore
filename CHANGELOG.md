@@ -13,6 +13,7 @@
 - License: the crate is now proprietary (`LicenseRef-Proprietary`, all rights reserved, see `LICENSE`), and so is the binding generator in `tools/uniffi-bindgen`. `LICENSE-MIT` and `LICENSE-APACHE` are removed; commits made before this change stay under MIT OR Apache-2.0, the licence they were made under. `deny.toml` no longer checks the licence of the repository's own unpublished crates (`private = { ignore = true }`); dependencies are checked against the same allow list as before.
 - `.github/dependabot.yml` を削除した
 - Unsafe code policy: the crate no longer forbids `unsafe` everywhere. It denies it everywhere except one private module, `src/sys/`, which holds the operating system calls (each `unsafe` block with a `SAFETY:` note). `scripts/unsafe_scope_check.py` (CI and preflight) fails on any `unsafe` outside it. Reading a secret on a Windows console needs these calls; the desktop key stores will use the same module
+- CI: the fuzz jobs check that `fuzz/Cargo.lock` is current (`cargo metadata --locked`) before the build; `cargo fuzz` has no `--locked` and re-resolved a stale lock silently
 
 ### Added
 

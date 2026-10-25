@@ -101,6 +101,11 @@ jobs:
       # build は blocking: compile error を continue-on-error で隠さない
       # (job-level continue-on-error だと fuzz target の compile error が
       #  green 表示で silent になる)
+      # cargo fuzz has no --locked: a stale fuzz/Cargo.lock would be re-resolved silently, so it is
+      # checked here first (cargo metadata --locked fails when the lock would change)
+      - name: fuzz/Cargo.lock is current
+        run: cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
+
       - name: Build fuzz target
         run: |
           cd fuzz
