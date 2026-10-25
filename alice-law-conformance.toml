@@ -1,0 +1,186 @@
+# ALICE-Law conformance manifest for this crate (alice-os-keystore). One entry per
+# gate defined in ALICE-Law's conformance/gates.toml; the schema (status /
+# evidence / since / note / reference_repo) is the "Manifest" section of
+# docs/CONFORMANCE.md in that repository.
+#
+# Every entry was written from a measurement on this repository at the commit
+# this file is added on: the test suites were run (default and release profile),
+# clippy was run with the crate's own configuration for each feature set, and
+# every mutant named below was applied, run and reverted. The crate stores and
+# serves keys: it computes no Law-bearing value and has no floating-point code
+# (src/ names neither f32 nor f64), so the gates about a Law-bearing value's bits,
+# identifier and history (G4, G6 to G9) are n/a, measured by
+# scripts/law_boundary_scan.py; the gates that keep it so (G1, G2, G3, G10, G13,
+# G14) are pass.
+
+[G1]
+status = "pass"
+evidence = [
+    "clippy.toml disallowed-methods: every f32 and f64 method gates.toml marks banned (sin_cos and powi among them), the f32 / f64 method part of the ALICE-Crypto list, which is ALICE-DB's",
+    ".github/workflows/ci.yml clippy job on ubuntu and Windows: default, uniffi and all features, all targets, each with -D warnings (`.github/workflows/ci.yml#- name: Clippy (default features, all targets)`, `.github/workflows/ci.yml#- name: Clippy (uniffi feature, all targets)`, `.github/workflows/ci.yml#- name: Clippy (all features, all targets)`); scripts/preflight.sh runs the same three",
+    "scripts/clippy_canary.py with scripts/clippy_canary_calls.tsv, generated from clippy.toml by scripts/gen_clippy_canary_calls.py (one row per disallowed-methods / disallowed-types entry: 66 planted, 1 skipped, the git-sourced alice_crypto::Key::generate of G10); each planted call must get exactly one disallowed diagnostic naming it in a throwaway crate that copies clippy.toml, and 0 rows or 0 entries fail; scripts/test_clippy_canary.py and scripts/test_gen_clippy_canary_calls.py; run by the clippy job on Linux and by scripts/preflight.sh",
+    "Cargo.lock has no libm package, so no libm free function can be named from this crate; src/ names no f32 or f64 (grep -rlE '\\bf(32|64)\\b' src/ finds nothing)",
+]
+mutant = "measured 2026-10-26, each reverted: deleting the f64::exp entry from clippy.toml makes scripts/clippy_canary.py exit 1 (`f64::exp` is not listed under disallowed-methods) and scripts/gen_clippy_canary_calls.py --check exit 1; appending `pub fn g1_mutant() -> f64 { core::hint::black_box(0.5_f64).sin() }` to src/lib.rs makes the default all-targets clippy exit 101 with disallowed method `f64::sin`"
+since = ""
+note = "src/ has no floating-point code, so the ban has 0 sites in every linted set; it keeps a first float transcendental from entering unnoticed."
+reference_repo = "ALICE-Crypto"
+
+[G2]
+status = "pass"
+evidence = [
+    "clippy.toml disallowed-methods f32 / f64 max, min and clamp, banned in every target with no exception (no raw_* manifest); the Law helper a new site must use is alice-det-math's max / min / clamp",
+    "src/ names no f32 or f64, so there is no float max / min site and no scalar site class",
+    "scripts/clippy_canary.py with scripts/clippy_canary_calls.tsv plants each of the six entries and fails unless clippy flags each",
+]
+mutant = "measured 2026-10-26, reverted: appending `pub fn g2_mutant(a: f64, b: f64) -> f64 { a.max(b) }` to src/lib.rs makes the default all-targets clippy exit 101 with disallowed method `f64::max`"
+since = ""
+note = "no site class exists in src/, so there is no tie test to carry; the crate has no SIMD code."
+reference_repo = "ALICE-Crypto"
+tie_tests = []
+
+[G3]
+status = "pass"
+evidence = [
+    "tools/no-outer-fneg-of-fma/src/main.rs (syntax-tree check, byte-identical to ALICE-LOL's: the fma family and every negation spelling of the gate; a renamed fma-family import or a fma-family path used as a value fails), with tools/no-outer-fneg-of-fma/Cargo.toml and tools/no-outer-fneg-of-fma/Cargo.lock (built and tested with --locked)",
+    "scripts/fneg_fma_ir_check.py (the gate, byte-identical to ALICE-LOL's: the release LLVM IR of alice-os-keystore with all features; a negation whose operand traces back to a fma call fails at the crate's own source line; a module without functions or a missing floor fails)",
+    "scripts/test_fneg_fma_ir_check.py with tools/fneg-fma-ir-probes/*.rs (byte-identical to ALICE-LOL's, compiled at test time for an aarch64 and an x86_64 target)",
+    "scripts/no-outer-fneg-of-fma-allowlist.toml (expected-fma-calls 0 and expected-src-fma-calls 0, compared exactly; [[ir]] floors 0 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu; no [[allow]] entry)",
+    ".github/workflows/ci.yml float-environment job (ubuntu, macOS, Windows): the tool's tests and the check (`.github/workflows/ci.yml#- name: No negated fma result (syntax tree, tests then check)`)",
+    ".github/workflows/g3-ir.yml (x86_64-unknown-linux-gnu on ubuntu-latest and aarch64-unknown-linux-gnu on ubuntu-24.04-arm; a changes job decides the run from merge-base(origin/main) with scripts/changed_paths.py and .github/paths/g3-ir.txt, a gate job is red when the IR job should have run and did not, and weekly)",
+]
+mutant = "measured 2026-10-26, each reverted: a test file holding `fn f(a: f64) -> f64 { -a.mul_add(2.0, 1.0) }` makes tools/no-outer-fneg-of-fma exit 1 with 2 violations (the negated fma and the count 1 against the declared 0); `pub fn g3_mutant(a: f32, b: f32, c: f32) -> f32 { -a.mul_add(b, c) }` appended to src/lib.rs makes scripts/fneg_fma_ir_check.py report a fneg of a fma result in g3_mutant (aarch64-apple-darwin, 689 functions, 1 fma call, 1 negated); unchanged: 688 functions, 0 fma calls, 0 negated"
+since = ""
+note = "no fused multiply-add call in the sources (the syntax-tree check parses 25 files and counts 0 against the declared 0), so a first new call fails on the count and a negated one on the form. Residual: code compiled only for another target (the macOS / Windows stores on the Linux IR runners) is checked by the syntax tree only."
+reference_repo = "ALICE-Crypto"
+
+[G4]
+status = "n/a"
+evidence = [
+    "scripts/law_boundary_scan.py: reads the rustdoc JSON of the library (all features, on each OS of the float-environment job) and lists every item of the public surface whose signature carries bytes or an alice_crypto::Key (public functions, trait and trait-impl methods, public struct fields); fails on an unlisted one, a listed one gone (an entry marked with an os only on that os), or a scan that compared nothing",
+    "scripts/law_boundary_table.toml: the 21 (file, parent, name) entries with their classes (key material, UniFFI serialization)",
+    "scripts/test_law_boundary_scan.py: the scanner's own tests",
+    ".github/workflows/ci.yml float-environment job: `.github/workflows/ci.yml#- name: Law boundary scan (tests, then the library's rustdoc JSON)`",
+]
+mutant = "measured 2026-10-26, reverted: `impl MemoryVault { pub fn export(&self) -> Vec<u8> { Vec::new() } }` appended to src/lib.rs makes the scan report MemoryVault::export as a byte boundary not in the table (exit 1, 18 items against 21 entries); unchanged: 17 items, 0 problems"
+note = "the crate computes no Law-bearing value: what crosses its surface is key material (alice_crypto::Key and the foreign interface's raw key bytes), the UniFFI converters of its records and data the operating system's stores return, none of it the output of a Law; src/ has no floating-point code. A first Law-bearing output would add an item the scan must list with its class, which is where G4 starts to apply."
+reference_repo = "ALICE-Crypto"
+
+[G5]
+status = "pass"
+evidence = [
+    ".github/workflows/ci.yml release job (`.github/workflows/ci.yml#jobs:>release:`): on ubuntu-latest (x86_64, against gnome-keyring in a private D-Bus session) and macos-latest (aarch64, against the runner's login keychain), cargo test --release --all-features through scripts/run_tests.sh with each binary's minimum count (the same counts as the debug test job)",
+    "scripts/run_tests.sh and scripts/test_run_tests.py (fails a named binary that ran fewer tests than named)",
+    "scripts/preflight.sh runs the same release step in its full part",
+]
+mutant = "measured 2026-10-26, reverted: `#[ignore]` on the first test of tests/vault_oracle.rs makes `scripts/run_tests.sh vault_oracle=11 -- cargo test --release --test vault_oracle` exit 1; unchanged: 11 tests passed, 11 in vault_oracle"
+since = ""
+note = "the store tests are the crate's oracles; the release leg runs them with the release profile on both architectures."
+reference_repo = "ALICE-Crypto"
+
+[G6]
+status = "n/a"
+evidence = [
+    "scripts/law_boundary_scan.py: reads the rustdoc JSON of the library (all features, on each OS of the float-environment job) and lists every item of the public surface whose signature carries bytes or an alice_crypto::Key; fails on an unlisted one, a listed one gone, or a scan that compared nothing",
+    "scripts/law_boundary_table.toml: the 21 entries with their classes (key material, UniFFI serialization)",
+    "scripts/test_law_boundary_scan.py: the scanner's own tests",
+]
+mutant = "measured 2026-10-26, reverted: `impl MemoryVault { pub fn export(&self) -> Vec<u8> { Vec::new() } }` appended to src/lib.rs makes the scan report MemoryVault::export as a byte boundary not in the table (exit 1)"
+note = "no Law-bearing value is computed (see G4), so there are no recorded bits to fold into a semantics identifier; the crate depends on alice-crypto for its key type and the KeyProvider trait only."
+reference_repo = "ALICE-Crypto"
+
+[G7]
+status = "n/a"
+evidence = [
+    "scripts/law_boundary_scan.py: every item of the public surface carrying bytes or an alice_crypto::Key, from the rustdoc JSON of each OS's build; fails on an unlisted one, a listed one gone, or a scan that compared nothing",
+    "scripts/law_boundary_table.toml: the 21 entries with their classes",
+    "scripts/test_law_boundary_scan.py: the scanner's own tests",
+]
+mutant = "measured 2026-10-26, reverted: `impl MemoryVault { pub fn export(&self) -> Vec<u8> { Vec::new() } }` appended to src/lib.rs makes the scan report MemoryVault::export as a byte boundary not in the table (exit 1)"
+note = "what this crate hands to another crate (the caller, the foreign side through UniFFI) is key material and its converters, not a Law-bearing value, so no identifier has to travel with it."
+reference_repo = "ALICE-Crypto"
+
+[G8]
+status = "n/a"
+evidence = [
+    "scripts/law_boundary_scan.py: every item of the public surface carrying bytes or an alice_crypto::Key, from the rustdoc JSON of each OS's build; fails on an unlisted one, a listed one gone, or a scan that compared nothing",
+    "scripts/law_boundary_table.toml: the 21 entries with their classes",
+    "scripts/test_law_boundary_scan.py: the scanner's own tests",
+]
+mutant = "measured 2026-10-26, reverted: `impl MemoryVault { pub fn export(&self) -> Vec<u8> { Vec::new() } }` appended to src/lib.rs makes the scan report MemoryVault::export as a byte boundary not in the table (exit 1). Adding a durable writer of a Law-bearing value makes G8 apply"
+note = "the durable forms this crate writes are key stores (the macOS Keychain, the Linux Secret Service, DPAPI-protected files on Windows) holding key material, which no Law computes, so no durable form carries a Law-bearing value. The Windows key file layout has no version of its own; that is a robustness question of the store, not of G8."
+reference_repo = "ALICE-Crypto"
+
+[G9]
+status = "n/a"
+evidence = [
+    "scripts/law_boundary_scan.py: every item of the public surface carrying bytes or an alice_crypto::Key, from the rustdoc JSON of each OS's build; fails on an unlisted one, a listed one gone, or a scan that compared nothing",
+    "scripts/law_boundary_table.toml: the 21 entries with their classes",
+    "scripts/test_law_boundary_scan.py: the scanner's own tests",
+]
+mutant = "G9 applies only when G8 does; measured on G8's scan 2026-10-26, reverted: `impl MemoryVault { pub fn export(&self) -> Vec<u8> { Vec::new() } }` appended to src/lib.rs makes the scan report MemoryVault::export as a byte boundary not in the table (exit 1)"
+note = "follows G8: no Law-bearing value is persisted, so there is no persisted identifier whose history could move."
+reference_repo = "ALICE-Crypto"
+
+[G10]
+status = "pass"
+evidence = [
+    "clippy.toml disallowed-methods `clippy.toml#path = \"alice_crypto::Key::generate\"`, `clippy.toml#path = \"std::time::Instant::now\"`, `clippy.toml#path = \"std::time::Instant::elapsed\"`, `clippy.toml#path = \"std::time::SystemTime::elapsed\"`, `clippy.toml#path = \"std::time::SystemTime::now\"`, `clippy.toml#path = \"std::collections::hash_map::RandomState::new\"` and disallowed-types `clippy.toml#path = \"std::collections::hash_map::RandomState\"`, linted with -D warnings by the clippy steps listed under G1",
+    "src/lib.rs: the one key-generation site, `src/lib.rs#pub(crate) fn fresh_key() -> Result<Key, KeyProviderError>`, under a scoped #[allow(clippy::disallowed_methods)] naming the operating system's entropy source (through alice-crypto) as the intended source; every store's rotate calls it",
+    "scripts/key_generate_ban_check.py with scripts/test_key_generate_ban_check.py: copies the crate, runs clippy --lib --all-features as it is (no diagnostic naming alice_crypto::Key::generate, exit 0) and with the allow above fresh_key removed (exactly one, in src/lib.rs); the allow not found exactly once compares nothing and fails; run by the clippy job on Linux (`.github/workflows/ci.yml#- name: Key generation ban (one call, flagged without its allow)`) and scripts/preflight.sh",
+    "scripts/clippy_canary.py plants the clock and RandomState entries (scripts/clippy_canary_calls.tsv rows `scripts/clippy_canary_calls.tsv#let _ = std::time::Instant::now;`, `scripts/clippy_canary_calls.tsv#let _ = std::time::SystemTime::now;`, `scripts/clippy_canary_calls.tsv#let _ = std::collections::hash_map::RandomState::new;`) and fails unless clippy flags each; the git-sourced alice_crypto::Key::generate is a skip row there, which scripts/key_generate_ban_check.py covers",
+]
+mutant = "measured 2026-10-26, each reverted: deleting the std::time::SystemTime::now entry from clippy.toml makes scripts/clippy_canary.py exit 1; appending a `std::time::SystemTime::now()` call to src/lib.rs makes the default all-targets clippy exit 101 with disallowed method `std::time::SystemTime::now`; a second `alice_crypto::Key::generate()` call in src/desktop.rs makes scripts/key_generate_ban_check.py exit 1 (the unmodified crate fails clippy with a diagnostic at src/desktop.rs, and 2 diagnostics with the allow removed)"
+since = ""
+note = "the only entropy the crate reads is a new key's, by design (a key must be unpredictable; no Law-bearing result is computed from it). The tests read the clock for a unique store name, the age of items left by killed runs and a test timeout, each under a scoped #[allow] saying so. The crate does not depend on getrandom, so clippy cannot name its entry points (an unreachable path is a warning); adding that dependency must add them to clippy.toml."
+reference_repo = "ALICE-Crypto"
+
+[G11]
+status = "pass"
+evidence = [
+    "conformance/g11.toml + scripts/g11_table.sh + .github/g11-table-pin: ALICE-Law's scripts/g11_table_check.py is fetched at the pinned rev and refused unless its SHA-256 matches, then it checks that every gate declared pass has a row naming its checker, canary, zero test and shared-file rows (0 rows compared fails); the table is generated by ALICE-Law's scripts/g11_table_gen.py from its shared-rows catalog and conformance/g11-own.toml; CI `.github/workflows/ci.yml#- name: G11 table matches the declared gates` and scripts/preflight.sh",
+    "scripts/shared_files.sh + scripts/test_shared_files.py + .github/shared-files-pin: ALICE-Law's table and checker fetched at the pin (SHA-256 checked), every shared copy compared byte for byte with the table (a difference, an unlisted shared path or 0 compared fails); CI `.github/workflows/ci.yml#- name: Shared files equal ALICE-Law's table` and scripts/preflight.sh",
+]
+mutant = "to be measured on the stack that pins the Law revision listing this repository: one byte appended to a shared copy must make scripts/shared_files.sh exit 1, and dropping the conformance/g11.toml rows of a pass gate must make scripts/g11_table.sh exit 1"
+since = ""
+note = "every copy this crate carries is at the target of the ALICE-Law shared-files table that lists it."
+reference_repo = ""
+
+[G12]
+status = "pass"
+evidence = [
+    ".github/workflows/public-text.yml (pushes to main and ci/**)",
+    "scripts/public_text.sh (fetches ALICE-Law's scripts/public_text_check.py at the pinned revision, refuses it unless the SHA-256 matches, exits 2 when it compared nothing)",
+    ".github/public-text-pin",
+    "scripts/test_public_text.py",
+]
+mutant = "to be measured on this stack: a README.md line holding one word of the checker's `agent process` class must make scripts/public_text.sh report one finding and exit 1"
+since = ""
+reference_repo = "ALICE-Crypto"
+
+[G13]
+status = "pass"
+evidence = [
+    "clippy.toml `clippy.toml#path = \"std::collections::HashMap\"` and `clippy.toml#path = \"std::collections::HashSet\"`: disallowed-types HashMap and HashSet (with RandomState banned for G10), so no hash iteration order can reach an output; the canary plants each",
+    "src/desktop/linux.rs: the one HashMap in src/ is the attribute map the secret-service API takes, built by `src/desktop/linux.rs#fn attributes<'v, const N: usize>(` under a scoped #[allow(clippy::disallowed_types)] and passed to the service, never iterated; src/ has no HashSet, rayon, std::thread or par_iter",
+    "scripts/clippy_canary.py with scripts/clippy_canary_calls.tsv: plants each disallowed entry, the HashMap and HashSet rows among them, and fails when clippy does not flag one",
+]
+mutant = "measured 2026-10-26, reverted: appending a function that collects a HashSet<u8> and returns its iteration as a Vec to src/lib.rs makes the default all-targets clippy exit 101 with disallowed type `std::collections::HashSet`"
+since = ""
+note = "the crate is single-threaded and iterates no hash container; the stores that return several items order them by an explicit rule (the Linux store: earliest created, ties by object path)."
+reference_repo = "ALICE-Crypto"
+
+[G14]
+status = "pass"
+evidence = [
+    "scripts/build_config_guard.py, static half (byte-identical to ALICE-DB's): every .cargo/config*, *.toml, build.rs, *.rs, *.yml / *.yaml, *.json and script outside target/, for target-cpu=native, non-literal target-cpu / target-feature / llvm-args values, RUSTFLAGS from a command or a file, fast-math-style flags, a target-feature list disabling sse / sse2, and the fast float intrinsics in src/",
+    "scripts/build_flags_check.py, dynamic half (byte-identical to ALICE-DB's): runs cargo check -v in a fresh target directory and reads every rustc command line; fails when none, or none for alice_os_keystore, was seen",
+    "scripts/build_config_allowlist.toml (five excludes with reasons: the two G14 scripts, their tests, this manifest; no allow entry)",
+    "scripts/test_build_config_guard.py, scripts/test_build_flags_check.py, scripts/run_tests.sh and scripts/test_run_tests.py",
+    ".github/workflows/ci.yml float-environment job (ubuntu, macOS, Windows): tests/float_environment.rs in debug and release through scripts/run_tests.sh float_environment=2, the static guard and the test files; on ubuntu and macOS the dynamic check for the default, uniffi and all-features sets in the release profile",
+    "tests/float_environment.rs round_to_nearest_even and subnormals_are_not_flushed (byte-identical to ALICE-DB's)",
+]
+mutant = "measured 2026-10-26, each reverted: ci.yml's env RUSTFLAGS set to `-C target-cpu=native` makes scripts/build_config_guard.py exit 1 with a target-cpu-native finding at .github/workflows/ci.yml:25; RUSTFLAGS='-C target-cpu=native' makes scripts/build_flags_check.py exit 1 with target-cpu-native findings; unchanged: 69 rustc invocations (1 for alice_os_keystore), 0 problems"
+since = ""
+note = "the static scan covers the files of this repository and the dynamic check covers the builds CI runs on ubuntu and macOS; a flag passed by a consumer's own build is outside both."
+reference_repo = "ALICE-Crypto"
