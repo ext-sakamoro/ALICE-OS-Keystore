@@ -128,7 +128,7 @@ jobs:
 
   release:
     # ALICE-Law G5: the test suite under the release profile on x86_64 (ubuntu) and aarch64
-    # (macOS), with the same minimum counts as the test job
+    # (macOS), with the same minimum counts as the test job, one literal line per OS
     name: Release profile tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -150,8 +150,10 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gnome-keyring dbus
       - name: Test (all features, release)
         run: |
-          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
-          scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --release --all-features
+          case "$(uname -s)" in
+            Linux) scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,read_secret=12,exchange=6,linux_secret_service=13,linux_headless=1 -- cargo test --release --all-features ;;
+            *) scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,read_secret=12,exchange=5,macos_keychain=18 -- cargo test --release --all-features ;;
+          esac
 
   float-environment:
     # ALICE-Law G14 on each OS: round-to-nearest-even and no flush-to-zero at run time in both
