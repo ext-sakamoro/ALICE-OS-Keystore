@@ -72,8 +72,7 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 
-# alice-crypto は AGPL-3.0-or-later OR LicenseRef-Commercial の二重 license この crate は Proprietary なので
-# commercial の側で使う (AGPL の側は許可しない)
+# alice-crypto の license の例外 (この crate だけに限る)
 [[licenses.exceptions]]
 name = "alice-crypto"
 allow = ["LicenseRef-Commercial"]
