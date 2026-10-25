@@ -47,6 +47,10 @@ const PREFIX: &str = "alice-os-keystore-test.";
 /// Items of a test run this old were left by a run that was killed
 const STALE: std::time::Duration = std::time::Duration::from_mins(30);
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a unique, sortable test item name and the age of items left by killed runs; it reaches no output of the crate"
+)]
 fn now_nanos() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

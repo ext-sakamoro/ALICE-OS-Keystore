@@ -93,11 +93,6 @@ fn generation_of(name: &str, prefix: &str, suffix: &str) -> Option<KeyGeneration
     digits.parse().ok()
 }
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-fn fresh_key() -> Result<Key, KeyProviderError> {
-    Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))
-}
-
 /// Read `generation`'s key, recording its marker when the key item has none
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn read_marked<S: GenerationItems>(
@@ -127,7 +122,7 @@ fn current_of<S: GenerationItems>(s: &S) -> Result<(KeyGeneration, Key), KeyProv
             }
             // the key item was listed but is gone now, without a marker: look again
         } else {
-            let key = fresh_key()?;
+            let key = crate::fresh_key()?;
             if s.create(1, &key)? {
                 s.mark(1)?;
                 return Ok((1, key));
@@ -146,7 +141,7 @@ fn rotate_of<S: GenerationItems>(s: &S) -> Result<KeyGeneration, KeyProviderErro
                 "generation counter exhausted",
             ))?,
         };
-        if s.create(next, &fresh_key()?)? {
+        if s.create(next, &crate::fresh_key()?)? {
             s.mark(next)?;
             return Ok(next);
         }

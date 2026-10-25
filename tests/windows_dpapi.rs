@@ -23,6 +23,10 @@ use alice_os_keystore::desktop::WindowsDpapiStore;
 struct Dir(PathBuf);
 
 impl Dir {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a unique test directory name; it reaches no output of the crate"
+    )]
     fn new(test: &str) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

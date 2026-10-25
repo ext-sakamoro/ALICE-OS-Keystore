@@ -16,8 +16,6 @@
 //! removed behind the store's back with the `secret-service` crate, as another program would.
 #![cfg(target_os = "linux")]
 
-use std::collections::HashMap;
-
 use alice_crypto::{KeyProvider, KeyProviderError};
 use alice_os_keystore::desktop::LinuxSecretServiceStore;
 use secret_service::blocking::SecretService;
@@ -26,14 +24,32 @@ use secret_service::EncryptionType;
 /// A service name no other test uses; its items are deleted on drop
 struct Service(String);
 
-fn attrs<'a>(service: &'a str, generation: &'a str) -> HashMap<&'a str, &'a str> {
-    HashMap::from([
+/// The attribute map the secret-service API takes
+#[allow(
+    clippy::disallowed_types,
+    reason = "the secret-service API takes its search attributes as a HashMap; it is built and passed, never iterated, so no order reaches an output"
+)]
+mod attribute_map {
+    pub type Attributes<'v> = std::collections::HashMap<&'v str, &'v str>;
+
+    pub fn attributes<'v, const N: usize>(pairs: [(&'v str, &'v str); N]) -> Attributes<'v> {
+        std::collections::HashMap::from(pairs)
+    }
+}
+use attribute_map::{attributes, Attributes};
+
+fn attrs<'a>(service: &'a str, generation: &'a str) -> Attributes<'a> {
+    attributes([
         ("keystore-service", service),
         ("keystore-generation", generation),
     ])
 }
 
 impl Service {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a unique test service name; it reaches no output of the crate"
+    )]
     fn new(test: &str) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -65,7 +81,7 @@ impl Service {
         let ss = SecretService::connect(EncryptionType::Dh).unwrap();
         let c = ss.get_default_collection().unwrap();
         let mut out: Vec<_> = c
-            .search_items(HashMap::from([("keystore-service", self.0.as_str())]))
+            .search_items(attributes([("keystore-service", self.0.as_str())]))
             .unwrap()
             .iter()
             .filter_map(|i| {
@@ -81,7 +97,7 @@ impl Service {
         let ss = SecretService::connect(EncryptionType::Dh).unwrap();
         let c = ss.get_default_collection().unwrap();
         for i in c
-            .search_items(HashMap::from([
+            .search_items(attributes([
                 ("keystore-service", self.0.as_str()),
                 ("keystore-issued", generation),
             ]))
@@ -137,7 +153,7 @@ impl Drop for Service {
         if let Ok(ss) = SecretService::connect(EncryptionType::Dh) {
             if let Ok(c) = ss.get_default_collection() {
                 if let Ok(items) =
-                    c.search_items(HashMap::from([("keystore-service", self.0.as_str())]))
+                    c.search_items(attributes([("keystore-service", self.0.as_str())]))
                 {
                     for i in items {
                         let _ = i.delete();
