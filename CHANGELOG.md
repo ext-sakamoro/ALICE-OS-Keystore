@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- 依存: `alice-crypto` の git rev を ALICE-Crypto の `4ab0f0e` に (deny の例外は `LicenseRef-Proprietary`)
 
 - **Breaking (0.2.0)**: the stores serve keys through `alice_crypto::KeyProvider` (re-exported with `Key`, `KeyGeneration`, `KeyProviderError`). `KeyVault`, `VaultError` and `DataKey` are removed. `current` / `by_generation` replace `current` / `by_id`; generation 0 is never a key (`UnknownGeneration(0)`); errors carry fixed reasons, not text from the operating system or a foreign store. `MemoryVault::generate` is now `rotate`, `MemoryVault::insert` refuses generation 0, and a retired generation is `Irrecoverable` instead of unknown. `ffi::ForeignVaultAdapter` implements `KeyProvider`: a key that is not 32 bytes, or a current generation of 0, from the foreign side is `Irrecoverable` (was `InvalidKeyLength`). The UniFFI interface (`ForeignKeyVault`, `GenerationKey`, `ForeignVaultError`) is unchanged
 - Tests: the macOS Keychain tests clean up after a killed run through per-run manifests of the services they create (written before the service is used); the sweep looks each listed service up by name and no longer lists the keychain with a search that has no service, which can miss items another process added just before. `macos_keychain` runs 18 tests

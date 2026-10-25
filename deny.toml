@@ -72,10 +72,10 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 
-# alice-crypto の license の例外 (この crate だけに限る)
+# alice-crypto の license の例外 (この crate だけに限る、同じ owner)
 [[licenses.exceptions]]
 name = "alice-crypto"
-allow = ["LicenseRef-Commercial"]
+allow = ["LicenseRef-Proprietary"]
 
 [[licenses.clarify]]
 name = "ring"
