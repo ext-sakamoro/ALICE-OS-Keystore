@@ -4,7 +4,7 @@ name: CI
 # rust-toolchain.toml (1.98.1) selects the compiler cargo uses here, and the fuzz jobs call
 # `cargo +nightly` explicitly; pinning the action itself is left to the shared template
 
-# fmt / clippy / test (3 OS) / doc / Apple (iOS libraries, Swift binding, Swift package) /
+# fmt / clippy / test (3 OS) / release (2 OS) / float environment (3 OS) / doc / Apple (iOS libraries, Swift binding, Swift package) /
 # scripts. Tests run through scripts/run_tests.sh, which fails a named test binary that
 # ran fewer tests than its minimum (a feature mismatch cannot turn a step into a no-op).
 
@@ -55,6 +55,42 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic
       - name: Clippy (all features, all targets)
         run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+      - name: Clippy (uniffi feature, all targets)
+        run: cargo clippy --all-targets --features uniffi -- -D warnings -W clippy::pedantic
+      # the list in clippy.toml (ALICE-Law G1 / G2 / G10 / G13) only gates anything if clippy
+      # flags a call to it: a throwaway crate with the same clippy.toml plants one banned call
+      # per row of scripts/clippy_canary_calls.tsv (generated from clippy.toml; --check fails
+      # on drift). The rows are the same on every OS, so they run on Linux only
+      - name: Clippy canary data (generator tests)
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_gen_clippy_canary_calls.py
+      - name: Clippy canary data (generated from clippy.toml, no drift)
+        if: runner.os == 'Linux'
+        run: python3 scripts/gen_clippy_canary_calls.py --check
+      - name: Clippy canary (tests)
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_clippy_canary.py
+      - name: Clippy canary (every planted banned call is flagged)
+        if: runner.os == 'Linux'
+        run: python3 scripts/clippy_canary.py
+      # a ban on an external crate's function covers that one path: every public function of
+      # each external module or type the list names must be banned or allowed with a reason
+      # in scripts/clippy_external_allow.toml
+      - name: Clippy external coverage (tests)
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_clippy_external_coverage.py
+      - name: Clippy external coverage (every public function of a named module is banned or allowed)
+        if: runner.os == 'Linux'
+        run: python3 scripts/clippy_external_coverage.py
+      # ALICE-Law G10: alice_crypto::Key::generate is banned outside crate::fresh_key; the
+      # canary cannot plant it (a git dependency), so the crate itself is checked with the
+      # allow at fresh_key removed: clippy must flag exactly that one call
+      - name: Key generation ban (tests)
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_key_generate_ban_check.py
+      - name: Key generation ban (one call, flagged without its allow)
+        if: runner.os == 'Linux'
+        run: python3 scripts/key_generate_ban_check.py
 
   test:
     name: Test (${{ matrix.os }})
@@ -89,6 +125,108 @@ jobs:
         run: |
           if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
           scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
+
+  release:
+    # ALICE-Law G5: the test suite under the release profile on x86_64 (ubuntu) and aarch64
+    # (macOS), with the same minimum counts as the test job
+    name: Release profile tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release-tests
+      - name: Install gnome-keyring (Linux, a real Secret Service for the key store tests)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gnome-keyring dbus
+      - name: Test (all features, release)
+        run: |
+          if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
+          scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --release --all-features
+
+  float-environment:
+    # ALICE-Law G14 on each OS: round-to-nearest-even and no flush-to-zero at run time in both
+    # profiles (scripts/run_tests.sh float_environment=2 fails unless both tests passed), the
+    # static build configuration guard, and on ubuntu / macOS the flags cargo really passes to
+    # rustc (scripts/build_flags_check.py). ALICE-Law G11 (the shared files and the G11 table),
+    # the G3 syntax-tree check and the G4 / G6 / G7 / G9 scope scan run here too
+    name: Float environment (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: float-environment
+      - name: Float environment (debug and release)
+        run: |
+          scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
+          scripts/run_tests.sh float_environment=2 -- cargo test --release --test float_environment
+      - name: run_tests.sh and build configuration guard (tests, then check)
+        run: |
+          python scripts/test_run_tests.py
+          python scripts/test_build_config_guard.py
+          python scripts/build_config_guard.py
+          python scripts/test_build_flags_check.py
+      # ALICE-Law G11 (c): the files shared with the other crates are the bytes ALICE-Law's
+      # table records (table and checker fetched at .github/shared-files-pin, both SHA-256
+      # pinned); a difference, an unlisted shared path or nothing compared fails
+      - name: Shared files equal ALICE-Law's table
+        run: |
+          python scripts/test_shared_files.py
+          scripts/shared_files.sh
+      # ALICE-Law G11: every gate declared pass has a row in conformance/g11.toml; the checker
+      # (scripts/g11_table_check.py) is fetched at .github/g11-table-pin and SHA-256 pinned; 0 compared fails
+      - name: G11 table matches the declared gates
+        run: scripts/g11_table.sh
+      - name: Effective rustc flags (default, uniffi, all features)
+        if: runner.os != 'Windows'
+        run: |
+          python scripts/build_flags_check.py -- cargo check --release --lib
+          python scripts/build_flags_check.py -- cargo check --release --lib --features uniffi
+          python scripts/build_flags_check.py -- cargo check --release --lib --all-features
+      # ALICE-Law G3, syntax-tree check (tools/no-outer-fneg-of-fma, byte-identical to
+      # ALICE-LOL's): its own tests, then the check over src/ tests/ examples/ benches/ with
+      # the exact fma-call counts of scripts/no-outer-fneg-of-fma-allowlist.toml (0 here)
+      - name: No negated fma result (syntax tree, tests then check)
+        run: |
+          cargo fmt --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --check
+          cargo test --quiet --locked --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml
+          cargo run --quiet --locked --release --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --root .
+      # scripts/changed_paths.py decides whether the path-filtered workflows run; its own
+      # tests, then the trigger lint (each pattern file equals its workflow's paths, the gate
+      # job needs every job)
+      - name: Changed paths (tests, then the trigger lint)
+        run: |
+          python scripts/test_changed_paths.py
+          python scripts/changed_paths.py sync
+      # ALICE-Law G4 / G6 / G7 / G9 scope: every item of the public surface carrying bytes or
+      # an alice_crypto::Key is in scripts/law_boundary_table.toml with its class (key material,
+      # the UniFFI converters); read from the rustdoc JSON of this OS's build, every feature on
+      - name: Law boundary scan (tests, then the library's rustdoc JSON)
+        env:
+          RUSTC_BOOTSTRAP: "1"
+        run: |
+          python scripts/test_law_boundary_scan.py
+          cargo rustdoc --lib --all-features -- -Z unstable-options --output-format json
+          python scripts/law_boundary_scan.py --json target/doc/alice_os_keystore.json
 
   doc:
     name: doc

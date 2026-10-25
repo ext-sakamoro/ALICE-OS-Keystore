@@ -1,0 +1,13 @@
+# tools/no-outer-fneg-of-fma (syntax-tree check), ALICE-Law G3. It reads this file
+# (copied byte-identical from ALICE-LOL with the check; this file itself is per
+# repository).
+#
+# expected-fma-calls / expected-src-fma-calls: the fma-family calls the syntax-tree
+# check finds in every scanned file / in src/. Both must equal what it finds: update
+# them in the commit that adds or removes a call. This repository has none, so G3
+# (no negated fma result) has nothing to apply to; a first fma call fails this check
+# until the count is raised, and that commit is where the gate starts to apply.
+expected-fma-calls = 0
+expected-src-fma-calls = 0
+
+# [[allow]]: none. Only tests/ and examples/ could carry one; src/ has no exception.

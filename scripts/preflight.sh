@@ -251,6 +251,7 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
 #   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
+#   - ci.yml:release:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
 #   - ci.yml:scripts:Install gnome-keyring (with_keyring.sh tests) (no cargo / grep)
 #   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
@@ -275,6 +276,7 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 need cargo-audit "cargo install cargo-audit --locked"
 need cargo-deny "cargo install cargo-deny --locked"
 need cargo-machete "cargo install cargo-machete --locked"
+command -v python >/dev/null 2>&1 || python() { python3 "$@"; }
 
 step "ci.yml / fmt: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; cargo fmt --all -- --check )
@@ -286,6 +288,82 @@ relint
 step "ci.yml / clippy: Clippy (all features, all targets)"
 relint
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic )
+
+step "ci.yml / clippy: Clippy (uniffi feature, all targets)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; cargo clippy --all-targets --features uniffi -- -D warnings -W clippy::pedantic )
+
+step "ci.yml / clippy: Clippy canary data (generator tests)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_gen_clippy_canary_calls.py )
+
+step "ci.yml / clippy: Clippy canary data (generated from clippy.toml, no drift)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/gen_clippy_canary_calls.py --check )
+
+step "ci.yml / clippy: Clippy canary (tests)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_clippy_canary.py )
+
+step "ci.yml / clippy: Clippy canary (every planted banned call is flagged)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/clippy_canary.py )
+
+step "ci.yml / clippy: Clippy external coverage (tests)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_clippy_external_coverage.py )
+
+step "ci.yml / clippy: Clippy external coverage (every public function of a named module is banned or allowed)"
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/clippy_external_coverage.py )
+
+step "ci.yml / clippy: Key generation ban (tests)"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_key_generate_ban_check.py )
+
+step "ci.yml / clippy: Key generation ban (one call, flagged without its allow)"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/key_generate_ban_check.py )
+
+step "ci.yml / float-environment: run_tests.sh and build configuration guard (tests, then check)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  python scripts/test_run_tests.py
+  python scripts/test_build_config_guard.py
+  python scripts/build_config_guard.py
+  python scripts/test_build_flags_check.py
+)
+
+step "ci.yml / float-environment: Shared files equal ALICE-Law's table"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  python scripts/test_shared_files.py
+  scripts/shared_files.sh
+)
+
+step "ci.yml / float-environment: G11 table matches the declared gates"
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/g11_table.sh )
+
+step "ci.yml / float-environment: Effective rustc flags (default, uniffi, all features)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  python scripts/build_flags_check.py -- cargo check --release --lib
+  python scripts/build_flags_check.py -- cargo check --release --lib --features uniffi
+  python scripts/build_flags_check.py -- cargo check --release --lib --all-features
+)
+
+step "ci.yml / float-environment: Changed paths (tests, then the trigger lint)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  python scripts/test_changed_paths.py
+  python scripts/changed_paths.py sync
+)
+
+step "ci.yml / float-environment: Law boundary scan (tests, then the library's rustdoc JSON)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings" RUSTC_BOOTSTRAP="1"
+  python scripts/test_law_boundary_scan.py
+  cargo rustdoc --lib --all-features -- -Z unstable-options --output-format json
+  python scripts/law_boundary_scan.py --json "${CARGO_TARGET_DIR:-target}"/doc/alice_os_keystore.json
+)
 
 step "ci.yml / doc: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --all-features )
@@ -464,6 +542,28 @@ step "ci.yml / test: Test (all features)"
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
   if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
   scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
+)
+
+step "ci.yml / release: Test (all features, release)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
+  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=7,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --release --all-features
+)
+
+step "ci.yml / float-environment: Float environment (debug and release)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
+  scripts/run_tests.sh float_environment=2 -- cargo test --release --test float_environment
+)
+
+step "ci.yml / float-environment: No negated fma result (syntax tree, tests then check)"
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  cargo fmt --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --check
+  cargo test --quiet --locked --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml
+  cargo run --quiet --locked --release --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --root .
 )
 
 step "ci.yml / apple: run"
