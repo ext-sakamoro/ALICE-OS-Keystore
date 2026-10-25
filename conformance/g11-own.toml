@@ -1,0 +1,30 @@
+# ALICE-Law G11: this repository's own rows of conformance/g11.toml (the rows of the checkers the ALICE
+# crates share are generated from ALICE-Law). ALICE-Law's scripts/g11_table_gen.py writes conformance/g11.toml
+# from both (python3 scripts/g11_table_gen.py --repo <this repository> --name ALICE-OS-Keystore --write, run in
+# an ALICE-Law checkout); the table is committed with the regeneration of ALICE-Law's shared-files table that
+# lists this repository, not before.
+#
+# The release leg is run by scripts/run_tests.sh, which fails a step when a named test binary ran fewer tests
+# than named; its zero test is therefore the compared-nothing test of the leg, and the canary is a test of a
+# binary the leg names.
+
+[[row]]
+gate = "G5"
+checker = ".github/workflows/ci.yml#- name: Test (all features, release)>linux_secret_service=13,linux_headless=1 -- cargo test --release"
+canary = "tests/vault_oracle.rs::by_generation_returns_the_stored_key_and_rejects_others"
+zero = "scripts/test_run_tests.py::RunTests.test_a_named_file_that_ran_zero_fails"
+shared = ["scripts/run_tests.sh", "scripts/test_run_tests.py"]
+
+[[row]]
+gate = "G5"
+checker = ".github/workflows/ci.yml#- name: Test (all features, release)>macos_keychain=18 -- cargo test --release"
+canary = "tests/vault_oracle.rs::by_generation_returns_the_stored_key_and_rejects_others"
+zero = "scripts/test_run_tests.py::RunTests.test_a_named_file_that_ran_zero_fails"
+shared = ["scripts/run_tests.sh", "scripts/test_run_tests.py"]
+
+[[row]]
+gate = "G10"
+checker = "scripts/key_generate_ban_check.py"
+canary = "scripts/test_key_generate_ban_check.py::Judge.test_no_diagnostic_with_the_allow_removed_is_red"
+zero = "scripts/test_key_generate_ban_check.py::Strip.test_a_missing_allow_compares_nothing"
+shared = "n/a: this crate's own check of its one key-generation site; the shared canary cannot plant a git-sourced dependency"
