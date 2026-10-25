@@ -1,0 +1,157 @@
+# ALICE-Law G4 / G6 / G7 / G9 scope: every item of the public surface whose signature carries
+# bytes or an alice_crypto::Key, keyed by file, parent and name, with its class and why no
+# Law-bearing value crosses it (scripts/law_boundary_scan.py). `os` marks an item compiled only
+# on that platform
+
+[[item]]
+file = "src/lib.rs"
+parent = "KeyProvider for MemoryVault"
+name = "current"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value"
+
+[[item]]
+file = "src/lib.rs"
+parent = "KeyProvider for MemoryVault"
+name = "by_generation"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value"
+
+[[item]]
+file = "src/lib.rs"
+parent = "MemoryVault"
+name = "insert"
+class = "key material"
+reason = "a caller's key placed into the in-memory store under a generation; no Law computes it"
+
+[[item]]
+file = "src/desktop/macos.rs"
+parent = "KeyProvider for MacosKeychainStore"
+name = "current"
+os = "macos"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/desktop/macos.rs"
+parent = "KeyProvider for MacosKeychainStore"
+name = "by_generation"
+os = "macos"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/desktop/linux.rs"
+parent = "KeyProvider for LinuxSecretServiceStore"
+name = "current"
+os = "linux"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/desktop/linux.rs"
+parent = "KeyProvider for LinuxSecretServiceStore"
+name = "by_generation"
+os = "linux"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/desktop/windows.rs"
+parent = "KeyProvider for WindowsDpapiStore"
+name = "current"
+os = "windows"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/desktop/windows.rs"
+parent = "KeyProvider for WindowsDpapiStore"
+name = "by_generation"
+os = "windows"
+class = "key material"
+reason = "a 32-byte key generation served to the caller, kept by the store and never derived from a Law-bearing value; read from the operating system's store"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "KeyProvider for ForeignVaultAdapter"
+name = "current"
+class = "key material"
+reason = "a key the foreign store returned, checked to be 32 bytes and passed on as it is"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "KeyProvider for ForeignVaultAdapter"
+name = "by_generation"
+class = "key material"
+reason = "a key the foreign store returned, checked to be 32 bytes and passed on as it is"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "ForeignKeyVault"
+name = "by_id"
+class = "key material"
+reason = "the foreign side's lookup of a key by generation (raw bytes over UniFFI)"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "GenerationKey"
+name = "key"
+class = "key material"
+reason = "the raw key bytes of a UniFFI record handed over by the foreign store"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "FfiConverter for GenerationKey"
+name = "try_read"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "Lift for GenerationKey"
+name = "try_read"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "FfiConverter for GenerationKey"
+name = "write"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "Lower for GenerationKey"
+name = "write"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "FfiConverter for ForeignVaultError"
+name = "try_read"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "Lift for ForeignVaultError"
+name = "try_read"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "FfiConverter for ForeignVaultError"
+name = "write"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
+
+[[item]]
+file = "src/ffi.rs"
+parent = "Lower for ForeignVaultError"
+name = "write"
+class = "UniFFI serialization"
+reason = "the converter UniFFI generates for this type: its fields as the bytes of a RustBuffer across the foreign interface"
