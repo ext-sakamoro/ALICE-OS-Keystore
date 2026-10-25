@@ -78,22 +78,14 @@ disallowed-methods = [
     { path = "f64::cbrt", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },
     { path = "f64::hypot", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },
     { path = "f64::powi", reason = "lowers to a multiplication tree of unspecified association order; write the multiplications out" },
-    # Determinism gate (ALICE-Law G10): no OS entropy and no wall clock where a
-    # Law-bearing result is computed. The dp noise is reproduced from a key
-    # (`DpNoise::with_key`, `SecureRng::from_key`); the OS-seeded constructor
-    # `SecureRng::try_from_entropy` (and `DpNoise::try_from_entropy`, which
-    # calls it) is an opt-in seed whose noise is not meant to be replayed, and
-    # carries a scoped #[expect] saying so.
-    # Generating secret material (cipher keys, nonces, signing keys, stored
-    # keys, secret-sharing coefficients) must read OS entropy and is no Law
-    # output: each of those functions carries a scoped #[expect] saying so.
-    # The clock and RandomState entries are ALICE-DB's G10 entries;
-    # getrandom::getrandom is added because this crate calls it directly.
-    # Every OS-entropy entry point of the getrandom version in Cargo.lock
-    # (0.2: getrandom and getrandom_uninit). getrandom 0.3 renames them (fill,
-    # fill_uninit, u32, u64): a bump of that dependency must update this list.
-    { path = "getrandom::getrandom", reason = "OS entropy makes a result vary from run to run; take a key (or seed) as an input" },
-    { path = "getrandom::getrandom_uninit", reason = "OS entropy makes a result vary from run to run; take a key (or seed) as an input" },
+    # Determinism gate (ALICE-Law G10): no OS entropy and no wall clock in this
+    # crate except where a new key is generated. That is one function,
+    # crate::fresh_key, which calls alice_crypto::Key::generate under a scoped
+    # #[allow] saying so; every store's rotate goes through it.
+    # The crate does not depend on getrandom, so clippy cannot name its entry
+    # points here (an unreachable path is a warning): adding that dependency
+    # must add them to this list.
+    # The clock and RandomState entries are ALICE-DB's G10 entries.
     { path = "alice_crypto::Key::generate", reason = "OS entropy makes a result vary from run to run; a new key comes only from crate::fresh_key (ALICE-Law G10)" },
     { path = "std::time::Instant::now", reason = "the wall clock makes results depend on timing; pass time in or use a step count" },
     { path = "std::time::Instant::elapsed", reason = "reads the wall clock the same as Instant::now; duration_since on an already-held value is fine, this reads the clock again" },
