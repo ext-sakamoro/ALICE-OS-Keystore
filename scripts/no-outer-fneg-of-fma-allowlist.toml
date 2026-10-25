@@ -1,5 +1,6 @@
-# tools/no-outer-fneg-of-fma (syntax-tree check), ALICE-Law G3. It reads this file
-# (copied byte-identical from ALICE-LOL with the check; this file itself is per
+# tools/no-outer-fneg-of-fma (syntax-tree check) and scripts/fneg_fma_ir_check.py
+# (optimised-IR gate), ALICE-Law G3. Both read this file
+# (copied byte-identical from ALICE-LOL with the two checks; this file itself is per
 # repository).
 #
 # expected-fma-calls / expected-src-fma-calls: the fma-family calls the syntax-tree
@@ -11,3 +12,19 @@ expected-fma-calls = 0
 expected-src-fma-calls = 0
 
 # [[allow]]: none. Only tests/ and examples/ could carry one; src/ has no exception.
+
+# [[ir]]: per target and package, the floor of fma-family calls in the optimised IR
+# (scripts/fneg_fma_ir_check.py, .github/workflows/g3-ir.yml). The floor's job is
+# non-vacuity; with no fma call in the sources it is 0 here (the IR check still fails
+# on a module without functions, and on any negated fma, which would come from inlined
+# code of a dependency).
+
+[[ir]]
+target = "x86_64-unknown-linux-gnu"
+package = "alice-os-keystore"
+min-fma-calls = 0
+
+[[ir]]
+target = "aarch64-unknown-linux-gnu"
+package = "alice-os-keystore"
+min-fma-calls = 0
