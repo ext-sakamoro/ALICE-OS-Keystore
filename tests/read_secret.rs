@@ -76,6 +76,10 @@ mod pty {
     }
 
     /// Waits until the reader has turned echo off (it does so before reading).
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a test timeout: the wall clock bounds how long the test waits, it reaches no output"
+    )]
     fn wait_for_echo_off(fd: &OwnedFd) {
         let start = Instant::now();
         while echo_on(fd) {

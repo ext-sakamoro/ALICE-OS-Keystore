@@ -66,6 +66,16 @@ mod sys;
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
 
+/// A fresh random key from the operating system's entropy source: the one place this crate
+/// draws randomness (every store's `rotate` comes here)
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a new key generation is random by design; the operating system's entropy source (through alice-crypto) is the intended source, and this is its only call"
+)]
+pub(crate) fn fresh_key() -> Result<Key, KeyProviderError> {
+    Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))
+}
+
 /// Keys kept only in this process's memory
 ///
 /// For tests and for data that must not outlive the process: nothing is
@@ -119,8 +129,7 @@ impl MemoryVault {
     /// [`KeyProviderError::Unavailable`] when the operating system's entropy source fails,
     /// or when the generation counter would overflow
     pub fn rotate(&self) -> Result<KeyGeneration, KeyProviderError> {
-        let key =
-            Key::generate().map_err(|_| KeyProviderError::Unavailable("entropy source failed"))?;
+        let key = fresh_key()?;
         let mut state = self.lock();
         let next = state
             .issued

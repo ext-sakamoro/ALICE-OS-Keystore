@@ -22,7 +22,7 @@
 //! keyring that cannot be unlocked, or no default collection, every call is
 //! [`KeyProviderError::Unavailable`], so the caller can fall back to a passphrase.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use secret_service::blocking::{Collection, Item, SecretService};
 use secret_service::{EncryptionType, Error as SsError};
@@ -42,6 +42,17 @@ pub struct LinuxSecretServiceStore {
 }
 
 // the service's own error text can name objects or paths; only the kind is passed on
+/// The attribute map the secret-service API takes for a search or a new item
+#[allow(
+    clippy::disallowed_types,
+    reason = "the secret-service API takes its search attributes as a HashMap; it is built and passed, never iterated, so no order reaches an output"
+)]
+fn attributes<'v, const N: usize>(
+    pairs: [(&'v str, &'v str); N],
+) -> std::collections::HashMap<&'v str, &'v str> {
+    std::collections::HashMap::from(pairs)
+}
+
 fn unavailable(e: &SsError) -> KeyProviderError {
     KeyProviderError::Unavailable(match e {
         SsError::Locked | SsError::Prompt | SsError::PromptDisconnected => {
@@ -126,7 +137,7 @@ impl LinuxSecretServiceStore {
         c: &'a Collection<'_>,
     ) -> Result<Vec<(KeyGeneration, Item<'a>)>, KeyProviderError> {
         let items = c
-            .search_items(HashMap::from([(SERVICE_ATTR, self.service.as_str())]))
+            .search_items(attributes([(SERVICE_ATTR, self.service.as_str())]))
             .map_err(|e| unavailable(&e))?;
         let mut out = Vec::new();
         for item in items {
@@ -147,7 +158,7 @@ impl LinuxSecretServiceStore {
         generation: KeyGeneration,
     ) -> Result<Vec<Item<'a>>, KeyProviderError> {
         let g = generation.to_string();
-        c.search_items(HashMap::from([
+        c.search_items(attributes([
             (SERVICE_ATTR, self.service.as_str()),
             (GENERATION_ATTR, g.as_str()),
         ]))
@@ -168,7 +179,7 @@ impl GenerationItems for LinuxSecretServiceStore {
     fn inventory(&self) -> Result<Inventory, KeyProviderError> {
         with_collection(|c| {
             let items = c
-                .search_items(HashMap::from([(SERVICE_ATTR, self.service.as_str())]))
+                .search_items(attributes([(SERVICE_ATTR, self.service.as_str())]))
                 .map_err(|e| unavailable(&e))?;
             let mut inv = Inventory::default();
             for item in items {
@@ -210,7 +221,7 @@ impl GenerationItems for LinuxSecretServiceStore {
             let created = c
                 .create_item(
                     &format!("{} key generation {generation}", self.service),
-                    HashMap::from([
+                    attributes([
                         (SERVICE_ATTR, self.service.as_str()),
                         (GENERATION_ATTR, g.as_str()),
                     ]),
@@ -227,7 +238,7 @@ impl GenerationItems for LinuxSecretServiceStore {
     fn mark(&self, generation: KeyGeneration) -> Result<(), KeyProviderError> {
         with_collection(|c| {
             let g = generation.to_string();
-            let attrs = HashMap::from([
+            let attrs = attributes([
                 (SERVICE_ATTR, self.service.as_str()),
                 (ISSUED_ATTR, g.as_str()),
             ]);
