@@ -154,7 +154,7 @@ evidence = [
     ".github/public-text-pin",
     "scripts/test_public_text.py",
 ]
-mutant = "to be measured on this stack: a README.md line holding one word of the checker's `agent process` class must make scripts/public_text.sh report one finding and exit 1"
+mutant = "measured 2026-10-28, reverted: a README.md line holding one word of the checker's `agent process` class makes scripts/public_text.sh report 1 finding (at that line) and exit 1; the unmodified tree exits 0 (171 files compared)"
 since = ""
 reference_repo = "ALICE-Crypto"
 
