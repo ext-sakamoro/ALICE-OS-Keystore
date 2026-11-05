@@ -77,37 +77,25 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
-      # The RUSTSEC-2026-0374 ignore below stays only while its reason holds: basic-toml is
-      # in Cargo.lock (else the ignore is stale) and built by no feature (else it would hide
-      # a real dependency; cargo-deny also reports that direction). The guard fails in both
-      # cases and when it compared nothing.
+      # basic-toml (RUSTSEC-2026-0374, unmaintained) is reported below as a warning and is
+      # not ignored. The guard fails when it leaves Cargo.lock (this note is stale) or when a
+      # feature builds it (then it is a real dependency and needs a hold), and when it
+      # compared nothing.
       - name: Fetch dependencies (the guard reads the dependency tree offline)
         run: cargo fetch --locked
       - name: Audit ignore guard (tests, then basic-toml)
         run: |
           python3 scripts/test_audit_ignore_guard.py
           python3 scripts/audit_ignore_guard.py basic-toml
-      # deny.toml と同期した ignore 一覧
-      # RUSTSEC-2026-0374 (basic-toml, unmaintained): in Cargo.lock only. the uniffi 0.28
-      # optional `bindgen` dependency (uniffi_bindgen -> askama 0.12 -> basic-toml) is
-      # recorded in the lockfile but is not built with any feature of this crate
-      # (`cargo tree -i basic-toml --all-features -e all --target all` prints nothing;
-      # cargo-deny, which resolves features, does not report it). The generator that
-      # does use it is tools/uniffi-bindgen, a separate workspace with its own lock that
-      # this job does not audit. Remove this ignore when uniffi drops basic-toml or the
-      # crate leaves uniffi 0.28.
+      # unmaintained advisories are warnings here (only yanked is denied) and are held in
+      # scripts/advisory_holds.toml + deny.toml. basic-toml is in Cargo.lock only: the uniffi
+      # 0.28 optional `bindgen` dependency (uniffi_bindgen -> askama 0.12 -> basic-toml) is
+      # built with no feature of this crate, and cargo-deny, which resolves features, does
+      # not report it. tools/uniffi-bindgen, which does use it, has its own lock and job.
       - name: Run cargo audit
         run: |
           cargo audit \
-            --deny yanked \
-            --ignore RUSTSEC-2024-0436 \
-            --ignore RUSTSEC-2025-0141 \
-            --ignore RUSTSEC-2026-0192 \
-            --ignore RUSTSEC-2026-0204 \
-            --ignore RUSTSEC-2025-0020 \
-            --ignore RUSTSEC-2026-0176 \
-            --ignore RUSTSEC-2026-0177 \
-            --ignore RUSTSEC-2026-0374
+            --deny yanked
 
   tools-audit:
     needs: changes

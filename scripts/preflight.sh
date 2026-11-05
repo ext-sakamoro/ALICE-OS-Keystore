@@ -477,15 +477,7 @@ step "security-audit.yml / audit: Run cargo audit"
 (
   export CARGO_TERM_COLOR="always" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   cargo audit \
-    --deny yanked \
-    --ignore RUSTSEC-2024-0436 \
-    --ignore RUSTSEC-2025-0141 \
-    --ignore RUSTSEC-2026-0192 \
-    --ignore RUSTSEC-2026-0204 \
-    --ignore RUSTSEC-2025-0020 \
-    --ignore RUSTSEC-2026-0176 \
-    --ignore RUSTSEC-2026-0177 \
-    --ignore RUSTSEC-2026-0374
+    --deny yanked
 )
 
 step "security-audit.yml / tools-audit: Run cargo audit on the tool's lock"
