@@ -31,7 +31,7 @@ crate = "zvariant"
 version = "5.15.1"
 dependents = ["zbus 5.19.0", "zbus_macros 5.19.0", "zbus_names 4.3.5"]
 fixed = []
-expires = "2027-01-31"
+expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
 
 [[hold]]
@@ -41,7 +41,7 @@ crate = "zbus_names"
 version = "4.3.5"
 dependents = ["zbus 5.19.0", "zbus_macros 5.19.0"]
 fixed = []
-expires = "2027-01-31"
+expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
 
 [[hold]]
@@ -51,5 +51,5 @@ crate = "zvariant_derive"
 version = "5.15.1"
 dependents = ["zvariant 5.15.1"]
 fixed = []
-expires = "2027-01-31"
+expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"

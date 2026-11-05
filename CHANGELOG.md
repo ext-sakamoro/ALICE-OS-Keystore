@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- CI: 共有の `advisory_hold_guard` (試験も) と `test_check_eol` を新しい版にした 保留の期限は今日から 21 日以内 (`advisory_holds.toml` を 2026-11-26 に)、`deny.toml` は `unused-ignored-advisory = "deny"`
 - Licence: `MIT OR Apache-2.0` → `LicenseRef-Proprietary`
 
 - **Breaking (0.2.0)**: the stores serve keys through `alice_crypto::KeyProvider` (re-exported with `Key`, `KeyGeneration`, `KeyProviderError`). `KeyVault`, `VaultError` and `DataKey` are removed. `current` / `by_generation` replace `current` / `by_id`; generation 0 is never a key (`UnknownGeneration(0)`); errors carry fixed reasons, not text from the operating system or a foreign store. `MemoryVault::generate` is now `rotate`, `MemoryVault::insert` refuses generation 0, and a retired generation is `Irrecoverable` instead of unknown. `ffi::ForeignVaultAdapter` implements `KeyProvider`: a key that is not 32 bytes, or a current generation of 0, from the foreign side is `Irrecoverable` (was `InvalidKeyLength`). The UniFFI interface (`ForeignKeyVault`, `GenerationKey`, `ForeignVaultError`) is unchanged
