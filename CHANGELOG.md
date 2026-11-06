@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `ForeignKeyVault`: Swift / Kotlin の key store が `ForeignVaultError` 以外の error を投げると process が abort していた `Unavailable` に変換する (元の文言は持ち込まない) `tools/foreign-vault-probe` で実際の FFI を通して `scripts/apple_check.sh` で確かめる
+
 ### Changed
 - **Breaking (0.2.0)**: `uniffi` を 0.28.3 から 0.32.2 に上げた 生成される Swift の `protocol ForeignKeyVault` は `AnyObject, Sendable` になり、準拠する型は Sendable が要る (Rust 側の trait は元から `Send + Sync`) 生成される binding を作り直す `SecureEnclaveVault` と `KeychainVault` は `Sendable` を宣言し、`@unchecked` なしで compiler が確かめる
 - CI: `scripts/apple_check.sh` の README の例の typecheck を `-swift-version 6` にした (Sendable の不足は警告でなく error)

@@ -5,6 +5,8 @@
 #   3. the Swift package's tests pass on macOS (swift test) and it builds for an iOS device and the iOS Simulator
 #   4. the README's conformance snippet (the ```swift block after "conforms a vault")
 #      typechecks against the generated binding and apple/'s sources
+#   5. a key store implemented in Swift, run across the FFI (tools/foreign-vault-probe), keeps each
+#      error's kind and does not abort the process on an error type the binding does not know
 # Each step fails the script; a snippet that is not found fails it too (no silent skip).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -46,4 +48,20 @@ func vaultsAreSendable() {
 SWIFT
 xcrun swiftc -typecheck -swift-version 6 -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos14 \
   -I "$out/inc" "$out/gen/alice_os_keystore.swift" apple/Sources/AliceOsKeystore/*.swift "$out/glue.swift" "$out/sendable.swift"
+# a key store implemented in Swift, across the real FFI: each error keeps its kind, and an error type
+# the binding does not know is Unavailable instead of aborting the process. Compared line by line, so
+# a run that stops early or prints nothing fails
+cargo build --locked --release --manifest-path tools/foreign-vault-probe/Cargo.toml --target-dir "$out/probe-target"
+probe_lib="$out/probe-target/release/libalice_os_keystore_foreign_vault_probe.dylib"
+cargo run --locked --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- generate \
+  --library "$probe_lib" --language swift --out-dir "$out/probe-gen"
+mkdir -p "$out/probe-inc"
+cat "$out"/probe-gen/*.modulemap > "$out/probe-inc/module.modulemap"
+cp "$out"/probe-gen/*.h "$out/probe-inc/"
+xcrun swiftc -swift-version 6 -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos14 \
+  -I "$out/probe-inc" -L "$out/probe-target/release" -lalice_os_keystore_foreign_vault_probe \
+  "$out"/probe-gen/*.swift tools/foreign-vault-probe/main.swift -module-name app -o "$out/probe-app"
+DYLD_LIBRARY_PATH="$out/probe-target/release" "$out/probe-app" > "$out/probe.out"
+diff tools/foreign-vault-probe/expected.txt "$out/probe.out"
+
 echo "apple_check: ios + ios-sim libraries, binding, Swift package (device + simulator), README snippet: ok"

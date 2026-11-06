@@ -171,3 +171,11 @@ fn an_irrecoverable_foreign_error_stays_irrecoverable_without_its_text() {
         "key store cannot recover this key: x"
     );
 }
+
+/// A foreign error of an unknown type is "not now", and its text does not come along
+#[test]
+fn an_unknown_foreign_error_is_unavailable_without_its_text() {
+    let e = ForeignVaultError::from(uniffi::UnexpectedUniFFICallbackError::new("/secret/path"));
+    assert!(matches!(e, ForeignVaultError::Unavailable { .. }), "{e:?}");
+    assert!(!e.to_string().contains("/secret/path"), "{e}");
+}

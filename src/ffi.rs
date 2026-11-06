@@ -40,6 +40,18 @@ impl std::fmt::Display for ForeignVaultError {
 
 impl std::error::Error for ForeignVaultError {}
 
+// A foreign store threw an error the binding does not know. Without this conversion the scaffolding
+// panics and the generated binding aborts the host process. Unavailable, not Irrecoverable: nothing
+// says the key is gone, and a caller must not give up on data over an error it cannot read. The
+// foreign text is not kept (it may carry paths or other detail).
+impl From<uniffi::UnexpectedUniFFICallbackError> for ForeignVaultError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Unavailable {
+            reason: "the foreign key store threw an error of an unknown type".to_string(),
+        }
+    }
+}
+
 /// The key store as the foreign side implements it
 #[uniffi::export(callback_interface)]
 pub trait ForeignKeyVault: Send + Sync {

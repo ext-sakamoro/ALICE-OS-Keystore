@@ -1,0 +1,5 @@
+good: generation 1 | key
+unknown key: Unavailable("the foreign key store cannot hand out keys now") | UnknownGeneration(1)
+unavailable: Unavailable("the foreign key store cannot hand out keys now") | Unavailable("the foreign key store cannot hand out keys now")
+irrecoverable: Irrecoverable("the foreign key store cannot recover this key") | Irrecoverable("the foreign key store cannot recover this key")
+other error: Unavailable("the foreign key store cannot hand out keys now") | Unavailable("the foreign key store cannot hand out keys now")

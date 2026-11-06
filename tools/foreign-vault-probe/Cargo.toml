@@ -1,0 +1,19 @@
+# A consumer of the crate across a real FFI boundary, kept out of the library: it takes a key store
+# implemented in Swift and reports what the adapter makes of it (scripts/apple_check.sh runs it).
+[package]
+name = "alice-os-keystore-foreign-vault-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+alice-os-keystore = { path = "../..", features = ["uniffi"] }
+# the same version as the library's uniffi (the generated binding must match the scaffolding)
+uniffi = "=0.32.2"
+
+[workspace]
+members = ["."]
