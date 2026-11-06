@@ -53,25 +53,3 @@ dependents = ["zvariant 5.15.1"]
 fixed = []
 expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
-
-# Held from the uniffi 0.28 tree; no version of these crates is safe.
-# Each ends on the date below; a renewal needs a new date and the reason it is still open.
-[[hold]]
-id = "RUSTSEC-2024-0436"
-kind = "unmaintained"
-crate = "paste"
-version = "1.0.15"
-dependents = ["uniffi_bindgen 0.28.3", "uniffi_core 0.28.3"]
-fixed = []
-expires = "2026-11-26"
-until = "a uniffi release without paste"
-
-[[hold]]
-id = "RUSTSEC-2025-0141"
-kind = "unmaintained"
-crate = "bincode"
-version = "1.3.3"
-dependents = ["uniffi_macros 0.28.3"]
-fixed = []
-expires = "2026-11-26"
-until = "a uniffi release without bincode"

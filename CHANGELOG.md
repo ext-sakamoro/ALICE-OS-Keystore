@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- **Breaking (0.3.0)**: `uniffi` を 0.28.3 から 0.32.2 に上げた 生成される Swift の `protocol ForeignKeyVault` は `AnyObject, Sendable` になり、準拠する型は Sendable が要る (Rust 側の trait は元から `Send + Sync`) 生成される binding を作り直す `SecureEnclaveVault` と `KeychainVault` は `Sendable` を宣言し、`@unchecked` なしで compiler が確かめる
+- CI: `scripts/apple_check.sh` の README の例の typecheck を `-swift-version 6` にした (Sendable の不足は警告でなく error)
+- 依存: `paste` (RUSTSEC-2024-0436) と `bincode` (RUSTSEC-2025-0141) は依存から消えたので、保留と `deny.toml` の行を外した
 - CI: 共有の `advisory_hold_guard` (試験も) と `test_check_eol` を新しい版にした 保留の期限は今日から 21 日以内 (`advisory_holds.toml` を 2026-11-26 に)、`deny.toml` は `unused-ignored-advisory = "deny"`
 - CI: `cargo audit` の `--ignore` をやめた (unmaintained は警告で、落ちるのは yanked だけ) `deny.toml` と合わせ、依存に無い 5 件 (pyo3 3 件、ttf-parser、crossbeam-epoch) を外し、残る paste と bincode は期限つきの保留にした
 - Fixed: yanked になった `async-executor` 1.14.0 を 1.14.1 に上げた (`cargo audit --deny yanked` が main で落ちていた)

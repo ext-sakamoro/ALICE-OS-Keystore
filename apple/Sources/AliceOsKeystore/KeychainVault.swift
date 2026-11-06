@@ -6,7 +6,7 @@ import Security
 /// For the iOS Simulator and devices without a Secure Enclave: the keys are protected by
 /// the Keychain's data protection only (`AfterFirstUnlockThisDeviceOnly`), not by a
 /// hardware-bound key. Prefer `SecureEnclaveVault` when `SecureEnclave.isAvailable`.
-public final class KeychainVault: DataKeyStore {
+public final class KeychainVault: DataKeyStore, Sendable {
     let service: String
 
     let backend: KeychainBackend

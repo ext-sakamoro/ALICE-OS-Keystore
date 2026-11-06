@@ -53,8 +53,16 @@ final class KeychainVaultAndSystemTests: XCTestCase {
     /// Every dictionary SystemKeychain passes to the Security functions, for all four operations,
     /// carries kSecUseDataProtectionKeychain (macOS would otherwise use the file-based keychain)
     func testEveryCallReachingTheSecurityLayerUsesTheDataProtectionKeychain() {
-        var seen: [(String, [String: Any])] = []
-        func record(_ op: String, _ d: CFDictionary) { seen.append((op, d as NSDictionary as! [String: Any])) }
+        final class Seen: @unchecked Sendable {
+            private let lock = NSLock()
+            private var entries: [(String, [String: Any])] = []
+            func record(_ op: String, _ d: CFDictionary) {
+                lock.withLock { entries.append((op, d as NSDictionary as! [String: Any])) }
+            }
+            var all: [(String, [String: Any])] { lock.withLock { entries } }
+        }
+        let recorder = Seen()
+        @Sendable func record(_ op: String, _ d: CFDictionary) { recorder.record(op, d) }
         let system = SystemKeychain(security: SecurityFunctions(
             copyMatching: { d, _ in record("copyMatching", d); return errSecItemNotFound },
             add: { d, _ in record("add", d); return errSecSuccess },
@@ -65,6 +73,7 @@ final class KeychainVaultAndSystemTests: XCTestCase {
         _ = system.add([kSecClass as String: kSecClassGenericPassword])
         _ = system.delete([kSecClass as String: kSecClassGenericPassword])
         _ = try? system.createRandomKey([kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom])
+        let seen = recorder.all
         XCTAssertEqual(seen.map(\.0), ["copyMatching", "add", "delete", "createRandomKey"])
         for (op, d) in seen {
             XCTAssertEqual(d[kSecUseDataProtectionKeychain as String] as? Bool, true, op)
@@ -102,7 +111,7 @@ final class SystemKeychainDefaultsTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/AliceOsKeystore/KeychainBackend.swift")
         let text = try String(contentsOf: source, encoding: .utf8)
-        guard let start = text.range(of: "struct SecurityFunctions {"),
+        guard let start = text.range(of: "struct SecurityFunctions: Sendable {"),
               let end = text.range(of: "\n}", range: start.upperBound..<text.endIndex) else {
             return XCTFail("struct SecurityFunctions not found in \(source.path)")
         }

@@ -28,8 +28,6 @@ version = 2
 yanked = "deny"
 ignore = [
     # unmaintained / transitive dep 由来の warning (informational only、CVE ではない)
-    "RUSTSEC-2024-0436",  # paste 1.0.15 unmaintained (proc-macro transitive)
-    "RUSTSEC-2025-0141",  # bincode 2.x unmaintained (postcard 移行コスト高)
     # 期限付きの保留 (scripts/advisory_holds.toml、scripts/advisory_hold_guard.py が版と依存元と期限を確かめる)
     "RUSTSEC-2026-0370",  # zvariant 5.15.1 unmaintained (zbus 5.19 via secret-service 5.2、Linux)
     "RUSTSEC-2026-0371",  # zbus_names 4.3.5 unmaintained (同上)

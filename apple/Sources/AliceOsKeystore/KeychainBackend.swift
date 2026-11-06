@@ -6,7 +6,7 @@ import Security
 /// Production uses `SystemKeychain` (the Security framework); tests drive the vaults
 /// through an in-memory implementation with injected faults, so the store / destroy /
 /// cleanup paths are tested without a device.
-protocol KeychainBackend {
+protocol KeychainBackend: Sendable {
     func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?)
     func add(_ attributes: [String: Any]) -> OSStatus
     func delete(_ query: [String: Any]) -> OSStatus
@@ -15,11 +15,11 @@ protocol KeychainBackend {
 
 /// The Security framework functions SystemKeychain calls, replaceable so a test can record
 /// exactly what reaches the Security layer
-struct SecurityFunctions {
-    var copyMatching: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemCopyMatching
-    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemAdd
-    var delete: (CFDictionary) -> OSStatus = SecItemDelete
-    var createRandomKey: (CFDictionary, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> SecKey? = SecKeyCreateRandomKey
+struct SecurityFunctions: Sendable {
+    var copyMatching: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemCopyMatching
+    var add: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemAdd
+    var delete: @Sendable (CFDictionary) -> OSStatus = SecItemDelete
+    var createRandomKey: @Sendable (CFDictionary, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> SecKey? = SecKeyCreateRandomKey
 }
 
 /// The Security framework's Keychain
