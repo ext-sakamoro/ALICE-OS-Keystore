@@ -37,6 +37,13 @@ if not m:
     sys.exit("apple_check: the README conformance snippet was not found")
 open(sys.argv[1], "w", encoding="utf-8").write(m.group(1))
 PY
+# every vault a consumer can hand to Rust is Sendable, also those the snippet does not conform
+cat > "$out/sendable.swift" <<'SWIFT'
+func vaultsAreSendable() {
+    let _: any Sendable.Type = SecureEnclaveVault.self
+    let _: any Sendable.Type = KeychainVault.self
+}
+SWIFT
 xcrun swiftc -typecheck -swift-version 6 -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos14 \
-  -I "$out/inc" "$out/gen/alice_os_keystore.swift" apple/Sources/AliceOsKeystore/*.swift "$out/glue.swift"
+  -I "$out/inc" "$out/gen/alice_os_keystore.swift" apple/Sources/AliceOsKeystore/*.swift "$out/glue.swift" "$out/sendable.swift"
 echo "apple_check: ios + ios-sim libraries, binding, Swift package (device + simulator), README snippet: ok"
