@@ -11,7 +11,7 @@ import Security
 /// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so keys open while the device is
 /// locked after the first unlock (background work), and never leave the device (no
 /// backup, no iCloud Keychain).
-public final class SecureEnclaveVault: DataKeyStore {
+public final class SecureEnclaveVault: DataKeyStore, Sendable {
     static let algorithm = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA256AESGCM
     let tag: Data
     let service: String

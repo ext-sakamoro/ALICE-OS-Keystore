@@ -4,13 +4,34 @@ import Security
 
 /// An in-memory keychain for tests: items are dictionaries, keys are software P-256 keys
 /// (ECIES works on them the same way), and faults can be injected per call.
-final class InMemoryKeychain: KeychainBackend {
-    var items: [[String: Any]] = []
+///
+/// `KeychainBackend` is Sendable, so the state here is guarded by `lock` (recursive: a locked method
+/// calls others): the compiler cannot check that, hence `@unchecked`, which only this test double uses.
+final class InMemoryKeychain: KeychainBackend, @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private var itemsStorage: [[String: Any]] = []
+    private var failAddStorage: (([String: Any]) -> OSStatus?)?
+    private var failDeleteStorage: (([String: Any]) -> OSStatus?)?
+    private var callsStorage: [[String: Any]] = []
+
+    var items: [[String: Any]] {
+        get { lock.withLock { itemsStorage } }
+        _modify { lock.lock(); defer { lock.unlock() }; yield &itemsStorage }
+    }
     /// Return a status to fail an add / delete whose attributes or query match
-    var failAdd: (([String: Any]) -> OSStatus?)?
-    var failDelete: (([String: Any]) -> OSStatus?)?
+    var failAdd: (([String: Any]) -> OSStatus?)? {
+        get { lock.withLock { failAddStorage } }
+        set { lock.withLock { failAddStorage = newValue } }
+    }
+    var failDelete: (([String: Any]) -> OSStatus?)? {
+        get { lock.withLock { failDeleteStorage } }
+        set { lock.withLock { failDeleteStorage = newValue } }
+    }
     /// Every query / attribute dictionary passed in, in order
-    var calls: [[String: Any]] = []
+    var calls: [[String: Any]] {
+        get { lock.withLock { callsStorage } }
+        _modify { lock.lock(); defer { lock.unlock() }; yield &callsStorage }
+    }
 
     static let matchKeys = [kSecClass, kSecAttrService, kSecAttrAccount, kSecAttrApplicationTag].map { $0 as String }
 
@@ -26,6 +47,7 @@ final class InMemoryKeychain: KeychainBackend {
     }
 
     func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
+        lock.lock(); defer { lock.unlock() }
         calls.append(query)
         let found = items.filter { matches($0, query) }
         if found.isEmpty { return (errSecItemNotFound, nil) }
@@ -40,6 +62,7 @@ final class InMemoryKeychain: KeychainBackend {
     }
 
     func add(_ attributes: [String: Any]) -> OSStatus {
+        lock.lock(); defer { lock.unlock() }
         calls.append(attributes)
         if let status = failAdd?(attributes) { return status }
         if items.contains(where: { matches($0, attributes) }) { return errSecDuplicateItem }
@@ -48,6 +71,7 @@ final class InMemoryKeychain: KeychainBackend {
     }
 
     func delete(_ query: [String: Any]) -> OSStatus {
+        lock.lock(); defer { lock.unlock() }
         calls.append(query)
         if let status = failDelete?(query) { return status }
         let before = items.count
@@ -56,6 +80,7 @@ final class InMemoryKeychain: KeychainBackend {
     }
 
     func createRandomKey(_ attributes: [String: Any]) throws -> SecKey {
+        lock.lock(); defer { lock.unlock() }
         calls.append(attributes)
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey([

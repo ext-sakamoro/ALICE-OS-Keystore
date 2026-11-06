@@ -89,7 +89,7 @@ jobs:
           python3 scripts/audit_ignore_guard.py basic-toml
       # unmaintained advisories are warnings here (only yanked is denied) and are held in
       # scripts/advisory_holds.toml + deny.toml. basic-toml is in Cargo.lock only: the uniffi
-      # 0.28 optional `bindgen` dependency (uniffi_bindgen -> askama 0.12 -> basic-toml) is
+      # 0.32 optional `bindgen` dependency (uniffi_bindgen -> askama_derive 0.16 -> basic-toml) is
       # built with no feature of this crate, and cargo-deny, which resolves features, does
       # not report it. tools/uniffi-bindgen, which does use it, has its own lock and job.
       - name: Run cargo audit

@@ -105,7 +105,7 @@ cargo run --locked --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- 
   --library target/release/libalice_os_keystore.dylib --language swift --out-dir generated/
 ```
 
-The generated module declares `protocol ForeignKeyVault { func current() throws -> GenerationKey; func byId(generation: UInt32) throws -> Data }`. A consumer that sees both modules conforms a vault with a few lines (this snippet is typechecked against the generated binding and `apple/`):
+The generated module declares `protocol ForeignKeyVault: AnyObject, Sendable { func current() throws -> GenerationKey; func byId(generation: UInt32) throws -> Data }`. A consumer that sees both modules conforms a vault with a few lines (this snippet is typechecked against the generated binding and `apple/`):
 
 ```swift
 import Foundation
@@ -128,7 +128,7 @@ extension SecureEnclaveVault: ForeignKeyVault {
 
 ## Gaps
 
-- `tools/uniffi-bindgen` (build-time only) has its own lock; its audit runs as an informational job (its basic-toml advisory is known). The library's `Cargo.lock` also lists basic-toml because uniffi 0.28 records its optional generator dependency; it is not built into the library (cargo-deny, which resolves features, does not report it) and the audit ignores it with an exit condition in `security-audit.yml`
+- `tools/uniffi-bindgen` (build-time only) has its own lock; its audit runs as an informational job (its basic-toml advisory is known). The library's `Cargo.lock` also lists basic-toml because uniffi 0.32 records its optional generator dependency; it is not built into the library (cargo-deny, which resolves features, does not report it) and the audit ignores it with an exit condition in `security-audit.yml`
 
 - Linux Secret Service store: run only on the CI Linux runner (gnome-keyring in a private D-Bus bus); KWallet is not tested
 - Three advisories are held on a date (`scripts/advisory_holds.toml`): zvariant / zbus_names / zvariant_derive are unmaintained as separate crates and come from zbus 5 through secret-service 5.2; the hold ends when secret-service moves to zbus 6 (or another maintained client with the encrypted session is used)

@@ -37,6 +37,6 @@ if not m:
     sys.exit("apple_check: the README conformance snippet was not found")
 open(sys.argv[1], "w", encoding="utf-8").write(m.group(1))
 PY
-xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos14 \
+xcrun swiftc -typecheck -swift-version 6 -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos14 \
   -I "$out/inc" "$out/gen/alice_os_keystore.swift" apple/Sources/AliceOsKeystore/*.swift "$out/glue.swift"
 echo "apple_check: ios + ios-sim libraries, binding, Swift package (device + simulator), README snippet: ok"

@@ -22,7 +22,7 @@ alice-crypto = { git = "https://github.com/ext-sakamoro/ALICE-Crypto", rev = "4a
 zeroize = "1"
 # warnings about stored duplicates (the Linux store); no output unless the application installs a logger
 log = "0.4"
-uniffi = { version = "=0.28.3", optional = true }
+uniffi = { version = "=0.32.2", optional = true }
 
 # reading a secret from a terminal: echo control (prompt module)
 [target.'cfg(unix)'.dependencies]

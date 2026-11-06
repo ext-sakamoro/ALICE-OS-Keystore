@@ -1,5 +1,5 @@
 # The binding generator, kept out of the library's dependency graph: uniffi's `cli`
-# feature pulls askama 0.12 -> basic-toml, which is unmaintained (RUSTSEC-2026-0374).
+# feature pulls askama 0.16 -> basic-toml, which is unmaintained (RUSTSEC-2026-0374).
 # This tool runs only at build time on a developer's or CI machine; nothing of it is
 # linked into the library or an app.
 [package]
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 # the same version as the library's uniffi (the generated binding must match the scaffolding)
-uniffi = { version = "=0.28.3", features = ["cli"] }
+uniffi = { version = "=0.32.2", features = ["cli"] }
 
 [workspace]
 members = ["."]
