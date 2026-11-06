@@ -105,6 +105,8 @@ cargo run --locked --release --manifest-path tools/uniffi-bindgen/Cargo.toml -- 
   --library target/release/libalice_os_keystore.dylib --language swift --out-dir generated/
 ```
 
+When your own crate exports functions taking a `ForeignKeyVault`, compile its generated Swift and this crate's generated Swift in one Swift module: the generated file for your crate does not import this crate's module, so separate targets fail with `cannot find type 'ForeignKeyVault' in scope`.
+
 The generated module declares `protocol ForeignKeyVault: AnyObject, Sendable { func current() throws -> GenerationKey; func byId(generation: UInt32) throws -> Data }`. A consumer that sees both modules conforms a vault with a few lines (this snippet is typechecked against the generated binding and `apple/`):
 
 ```swift

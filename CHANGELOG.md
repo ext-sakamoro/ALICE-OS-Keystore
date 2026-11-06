@@ -4,6 +4,7 @@
 
 ### Fixed
 - `ForeignKeyVault`: Swift / Kotlin の key store が `ForeignVaultError` 以外の error を投げると process が abort していた `Unavailable` に変換する (元の文言は持ち込まない) `tools/foreign-vault-probe` で実際の FFI を通して `scripts/apple_check.sh` で確かめる
+- README: 自分の crate の生成 Swift とこの crate の生成 Swift は 1 つの Swift module で compile する必要があることを書いた
 
 ### Changed
 - **Breaking (0.2.0)**: `uniffi` を 0.28.3 から 0.32.2 に上げた 生成される Swift の `protocol ForeignKeyVault` は `AnyObject, Sendable` になり、準拠する型は Sendable が要る (Rust 側の trait は元から `Send + Sync`) 生成される binding を作り直す `SecureEnclaveVault` と `KeychainVault` は `Sendable` を宣言し、`@unchecked` なしで compiler が確かめる
