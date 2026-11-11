@@ -10,8 +10,11 @@ scripts/test_audit_ignore_guard.py
 scripts/advisory_holds.toml
 scripts/advisory_hold_guard.py
 scripts/test_advisory_hold_guard.py
-scripts/alice_local_registry.py
-scripts/test_alice_local_registry.py
+scripts/package_integrity.py
+scripts/test_package_integrity.py
+scripts/alice_siblings_check.py
+scripts/id_move_check.py
+scripts/release_baseline.py
 .github/workflows/security-audit.yml
 .github/actions/**
 .github/paths/security-audit.txt

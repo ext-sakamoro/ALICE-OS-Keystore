@@ -11,6 +11,7 @@
 - README: 自分の crate の生成 Swift とこの crate の生成 Swift は 1 つの Swift module で compile する必要があることを書いた
 
 ### Changed
+- CI: package-integrity を ALICE-Law の共有 file `scripts/package_integrity.py` (と `alice_siblings_check.py` / `id_move_check.py` / `release_baseline.py`、試験 `test_package_integrity.py`) に替え、`scripts/alice_local_registry.py` と試験を削除 git の main branch から取る `alice-crypto` (crates.io に無い 0.7) は blocked と名指し、Cargo.lock が解決した commit で build する preflight を生成し直した
 - 依存 `alice-crypto` を rev ed065ad (0.6.0) の固定から ALICE-Crypto の `branch = "main"` + version 0.7 に替えた (Cargo.lock / fuzz / tools/foreign-vault-probe の lock も) 使う API は 0.7 でも同じで、試験は変更なし
 - `alice-crypto` を main の `ed065ad` に上げる (前の pin `4ab0f0e` からの差分は CI の変更のみ、封の bytes と識別子は変わらない)
 - **Breaking (0.2.0)**: `uniffi` を 0.28.3 から 0.32.2 に上げた 生成される Swift の `protocol ForeignKeyVault` は `AnyObject, Sendable` になり、準拠する型は Sendable が要る (Rust 側の trait は元から `Send + Sync`) 生成される binding を作り直す `SecureEnclaveVault` と `KeychainVault` は `Sendable` を宣言し、`@unchecked` なしで compiler が確かめる
