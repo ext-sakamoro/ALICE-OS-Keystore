@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- `rustix` を 1.1.5 から 1.1.6 に (Cargo.lock / fuzz、RUSTSEC-2026-0486: xattr の関数が長さ 0 の buffer で書いていない byte を初期化済みにする、zbus / secret-service と uniffi の経路で入る) この crate は xattr の関数を呼ばないが、修正版があるので上げた
+
 ### Fixed
 - `ForeignKeyVault`: Swift / Kotlin の key store が `ForeignVaultError` 以外の error を投げると process が abort していた `Unavailable` に変換する (元の文言は持ち込まない) `tools/foreign-vault-probe` で実際の FFI を通して `scripts/apple_check.sh` で確かめる
 - README: 自分の crate の生成 Swift とこの crate の生成 Swift は 1 つの Swift module で compile する必要があることを書いた
