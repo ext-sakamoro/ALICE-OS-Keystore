@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- `web::WebCryptoStore` (wasm32, feature `web`): the browser key store 世代ごとの鍵 (AES-256-GCM / HMAC-SHA-256 / Ed25519) を取り出せない WebCrypto の `CryptoKey` で作り IndexedDB に置く (reload を越えて使える) `alice_crypto::AsyncKeyOps` (`current_generation` / `seal` / `open` / `mac`) を実装し、封じた値は `AMS2 ‖ 世代 (u32 BE) ‖ nonce 12 byte ‖ 暗号文と tag` 署名は `sign` / `verifying_key` / `WebCryptoStore::verify`、`rotate` / `remove` / `import_known` / `persisted` / `close` / `delete_database` 乱数 nonce なので 1 世代の封は 2³² 回まで (回数は鍵と一緒に保存し、上限の世代は `rotate` まで封を拒む)
+- feature `web-page`: page から呼ぶ JavaScript の関数 (`reset` / `attach` / `rotate` / `seal` / `open` / `anyKeyExtractable`)
+- `AsyncKeyOps` / `KeyOps` / `KeyOpsError` を `alice-crypto` から再公開
+- CI: workflow `web.yml` (wasm32 の clippy、headless Chrome / Firefox の wasm-bindgen 試験、Playwright の Chromium / Firefox / WebKit で reload の試験、各 lane は通った試験が 0 件か browser が欠けると fail)
+
 ### Security
 
 - `rustix` を 1.1.5 から 1.1.6 に (Cargo.lock / fuzz、RUSTSEC-2026-0486: xattr の関数が長さ 0 の buffer で書いていない byte を初期化済みにする、zbus / secret-service と uniffi の経路で入る) この crate は xattr の関数を呼ばないが、修正版があるので上げた

@@ -11,6 +11,7 @@ An application seals its data at rest with a 32-byte key and does not store that
 | macOS | `desktop::MacosKeychainStore`: one generic password item per generation in the login keychain | implemented |
 | Windows | `desktop::WindowsDpapiStore`: one DPAPI-sealed file per generation in `%LOCALAPPDATA%\<service>` | implemented |
 | Linux | `desktop::LinuxSecretServiceStore`: one Secret Service item per generation (gnome-keyring, KWallet) | implemented |
+| browser (wasm32) | `web::WebCryptoStore` (feature `web`): non-extractable AES-256-GCM, HMAC-SHA-256 and Ed25519 WebCrypto keys kept in IndexedDB, used through `AsyncKeyOps` (seal / open / MAC by generation) and its own Ed25519 `sign` / `verifying_key` | implemented; it has no key bytes to hand out, so it is not a `KeyProvider` |
 | tests, ephemeral data | `MemoryVault` | implemented (keys only in memory, nothing protected at rest) |
 
 ## Rust
@@ -127,6 +128,14 @@ extension SecureEnclaveVault: ForeignKeyVault {
     }
 }
 ```
+
+## Browser (wasm32, feature `web`)
+
+`web::WebCryptoStore` keeps each generation's keys as WebCrypto `CryptoKey`s made with `extractable: false` and stores them in IndexedDB (they keep that property when stored), so neither the page's JavaScript nor the wasm module can read them. It implements `AsyncKeyOps` from `alice-crypto`: ask for `current_generation`, then `seal` / `open` / `mac` under a generation. A sealed value is `AMS2 ‖ generation (u32 BE) ‖ nonce (12) ‖ AES-256-GCM ciphertext and tag`, with the caller's associated data passed to AES-GCM as is; the MAC is HMAC-SHA-256 over `len(context) (u64 LE) ‖ context ‖ message`. The nonce is random, so a generation seals at most 2³² values (NIST SP 800-38D): the count is stored with the keys and a generation that reached it is refused until `rotate`. `remove(g)` deletes a generation's keys (`Irrecoverable` afterwards).
+
+Limits of a browser store: the keys belong to the page's origin; clearing the site's data removes them and every value they sealed; a browser may evict a rarely used site's data unless persistent storage was granted (`persisted()` reports it, asking is the page's choice since some browsers prompt); without IndexedDB (some private windows) `open` is `Unavailable`. Long-lived keys belong to a native wrapper (Keychain / Keystore); the browser store is "this browser on this device".
+
+Tests: `tests/web_webcrypto_store.rs` runs in headless Chrome and Firefox (`wasm-pack test --headless --chrome --firefox -- --features web`), and `tests/web/reload.spec.mjs` reloads a real page in Playwright's Chromium, Firefox and WebKit (feature `web-page` builds the page's package); `scripts/web_test_count.py` fails a lane that passed 0 tests or missed a browser (workflow `web.yml`).
 
 ## Gaps
 

@@ -3,6 +3,7 @@
 //! The unix tests drive the reader through a pseudo-terminal and check the
 //! terminal's echo flag while the reader waits and after it returns, on the
 //! success path and on the error paths.
+#![cfg(any(unix, windows))] // the prompt module exists on these targets only
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use alice_os_keystore::prompt::{read_secret_from, PromptError};

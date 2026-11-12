@@ -10,3 +10,11 @@ tools/uniffi-bindgen/target
 tools/foreign-vault-probe/target
 __pycache__/
 coverage-summary.txt
+/tests/web/page/pkg
+/tests/web/node_modules
+/tests/web/test-results
+/tests/web/playwright-report
+/chrome.log
+/firefox.log
+/web-report.json
+/http.log
