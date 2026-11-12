@@ -12,6 +12,7 @@
 //! | Android | Keystore (Kotlin) through [`ffi::ForeignKeyVault`] | not yet |
 //! | Windows | `desktop::WindowsDpapiStore` (Windows only): one DPAPI-sealed file per generation under `%LOCALAPPDATA%` | implemented |
 //! | Linux | `desktop::LinuxSecretServiceStore` (Linux only): one Secret Service item per generation | implemented |
+//! | browser | `web::WebCryptoStore` (wasm32 and feature `web`): non-extractable AES-256-GCM, HMAC-SHA-256 and Ed25519 `WebCrypto` keys kept in `IndexedDB`, used through [`AsyncKeyOps`] (it has no key bytes to give, so it is not a [`KeyProvider`]) | implemented |
 //! | tests, ephemeral use | [`MemoryVault`] | implemented (keys only in memory) |
 //!
 //! Keys have a *generation* ([`KeyGeneration`], starting at 1; 0 is never a key): data
@@ -51,6 +52,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+pub use alice_crypto::{AsyncKeyOps, KeyOps, KeyOpsError};
 pub use alice_crypto::{Key, KeyGeneration, KeyProvider, KeyProviderError};
 
 pub mod desktop;
@@ -62,6 +64,10 @@ pub mod prompt;
 #[cfg(any(unix, windows))]
 #[allow(unsafe_code)]
 mod sys;
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+pub mod web;
+#[cfg(all(target_arch = "wasm32", feature = "web-page"))]
+pub mod web_page;
 
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();

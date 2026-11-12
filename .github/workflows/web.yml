@@ -1,0 +1,74 @@
+name: Web
+
+# The browser key store (feature web, wasm32): clippy for wasm32, the wasm-bindgen tests in
+# headless Chrome and Firefox (tests/web_webcrypto_store.rs), and the reload test in Playwright's
+# Chromium, Firefox and WebKit (tests/web/reload.spec.mjs). scripts/web_test_count.py fails each
+# lane that passed 0 tests, missed a browser or failed one.
+
+on:
+  push:
+    branches: [main, 'ci/**']
+    paths:
+      - 'src/web.rs'
+      - 'src/web_page.rs'
+      - 'src/lib.rs'
+      - 'tests/web_webcrypto_store.rs'
+      - 'tests/web/**'
+      - 'scripts/web_test_count.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/web.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  browser:
+    name: browser (wasm-bindgen Chrome / Firefox, Playwright Chromium / Firefox / WebKit)
+    runs-on: ubuntu-24.04 # Playwright installs no Chromium on 26.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # the target goes to the toolchain rust-toolchain.toml selects (the action's `targets` would go to stable)
+      - name: Add the wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: wasm-pack@0.15.0
+      - name: Clippy (wasm32, web-page, all targets)
+        run: cargo clippy --target wasm32-unknown-unknown --features web-page --all-targets -- -D warnings -W clippy::pedantic
+      # one step with its count (the logs exist only here; 0 tests in a browser fails)
+      - name: wasm-bindgen tests (headless Chrome and Firefox) and their count
+        run: |
+          set -o pipefail
+          wasm-pack test --headless --chrome -- --features web --test web_webcrypto_store 2>&1 | tee chrome.log
+          wasm-pack test --headless --firefox -- --features web --test web_webcrypto_store 2>&1 | tee firefox.log
+          python3 scripts/web_test_count.py --wasm chrome.log firefox.log
+      - name: Build the page package
+        run: wasm-pack build --target web --out-dir tests/web/page/pkg . -- --features web-page
+      - name: Install Playwright and its browsers
+        working-directory: tests/web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium firefox webkit
+      # the report's count decides (a failed or missing browser fails it), not npx's exit code
+      - name: Playwright reload test (Chromium / Firefox / WebKit) and its count
+        run: |
+          python3 -m http.server 8123 --bind :: -d tests/web/page > http.log 2>&1 &
+          for _ in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8123/index.html && curl -sf -o /dev/null http://localhost:8123/index.html && break; sleep 1; done
+          (cd tests/web && npx playwright test --reporter=json > ../../web-report.json) || true
+          python3 scripts/web_test_count.py --playwright web-report.json
