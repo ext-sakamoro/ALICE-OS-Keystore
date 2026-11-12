@@ -690,6 +690,18 @@ step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/unsafe_scope_check.py )
 )
 
+step "ci.yml / scripts: run"
+(
+  gh_step ci.yml.scripts
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_lock_sources_check.py )
+)
+
+step "ci.yml / scripts: run"
+(
+  gh_step ci.yml.scripts
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/lock_sources_check.py )
+)
+
 step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
 (
   gh_step security-audit.yml.audit
