@@ -105,7 +105,8 @@ skip-tree = []
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# alice-crypto: public sibling, pinned by the full commit in Cargo.toml
-allow-git = ["https://github.com/ext-sakamoro/ALICE-Crypto"]
+# alice-crypto: public sibling (branch main, resolved commit in Cargo.lock)
+# alice-sign: public sibling, a wasm32 dev-dependency of the browser tests (the native Ed25519 signer)
+allow-git = ["https://github.com/ext-sakamoro/ALICE-Crypto", "https://github.com/ext-sakamoro/ALICE-Sign"]
 
 [sources.allow-org]

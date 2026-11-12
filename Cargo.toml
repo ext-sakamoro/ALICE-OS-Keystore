@@ -14,6 +14,10 @@ crate-type = ["lib", "staticlib", "cdylib"]
 default = []
 # UniFFI callback interface: a key store implemented in Swift / Kotlin is handed to Rust as a KeyProvider
 uniffi = ["dep:uniffi"]
+# the browser key store (`web::WebCryptoStore`, wasm32 only): non-extractable WebCrypto keys kept in IndexedDB
+web = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys", "alice-crypto/wasm-js"]
+# JavaScript functions over one browser store, for a page (the browser reload test builds this with wasm-pack)
+web-page = ["web"]
 
 [dependencies]
 # the key type (zeroed on drop) and the KeyProvider trait the stores implement
@@ -23,6 +27,27 @@ zeroize = "1"
 # warnings about stored duplicates (the Linux store); no output unless the application installs a logger
 log = "0.4"
 uniffi = { version = "=0.32.2", optional = true }
+
+# the browser key store (feature web)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Crypto", "CryptoKey", "SubtleCrypto"] }
+
+# the browser tests (tests/web_webcrypto_store.rs): independent AES-GCM and Ed25519, and the native signer
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "DomException", "SubtleCrypto", "Window"] }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+ed25519-dalek = { version = "2.1", default-features = false }
+hmac = "0.12"
+futures = "0.3"
+sha2 = { version = "0.10", default-features = false }
+alice-sign = { git = "https://github.com/ext-sakamoro/ALICE-Sign", branch = "main", version = "0.1" }
 
 # reading a secret from a terminal: echo control (prompt module)
 [target.'cfg(unix)'.dependencies]

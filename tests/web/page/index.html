@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>alice-os-keystore browser store</title>
+</head>
+<body>
+<script type="module">
+// pkg/ is built by: wasm-pack build --target web --out-dir tests/web/page/pkg -- --features web-page
+import init, * as ks from "./pkg/alice_os_keystore.js";
+await init();
+window.keystore = {
+  reset: ks.reset,
+  attach: ks.attach,
+  rotate: ks.rotate,
+  seal: ks.seal,
+  open: ks.open,
+  anyKeyExtractable: ks.anyKeyExtractable,
+};
+window.keystoreReady = true;
+</script>
+</body>
+</html>

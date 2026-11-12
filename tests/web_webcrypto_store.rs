@@ -1,5 +1,5 @@
-//! The browser key store: WebCrypto keys that never leave the browser, kept across a
-//! reload in IndexedDB, used by generation to seal, open, authenticate and sign.
+//! The browser key store: `WebCrypto` keys that never leave the browser, kept across a
+//! reload in `IndexedDB`, used by generation to seal, open, authenticate and sign.
 //!
 //! Red by design until `web::WebCryptoStore` exists (the store and the operation trait
 //! it implements are not built yet): this file pins the contract first.
@@ -9,9 +9,10 @@
 //!
 //! Oracles (each against something outside the store):
 //! 1. non-extractable: `extractable` is false and `exportKey` rejects, also for the key
-//!    read back from IndexedDB;
+//!    read back from `IndexedDB`;
 //! 2. sealing: the independent `aes-gcm` crate opens what the store sealed under a known key,
-//!    and the store opens what `aes-gcm` sealed;
+//!    and the store opens what `aes-gcm` sealed; the MAC equals HMAC-SHA-256 computed by the
+//!    `hmac` crate over the framed context and message;
 //! 3. signing: RFC 8032 §7.1 test 1 (an empty message) gives the published signature,
 //!    `ed25519-dalek` and `alice-sign` verify the store's signature on another message, and
 //!    the store verifies `alice-sign`'s signature made from the same seed;
@@ -23,7 +24,10 @@
 //! 7. persistence: after closing the database and dropping every handle, a fresh `open`
 //!    of the same database opens what was sealed before (the reload itself is
 //!    `tests/web/reload.spec.mjs`);
-//! 8. no IndexedDB, or a refused persistence request, is `Unavailable`, not a panic.
+//! 8. no `IndexedDB`, or a refused persistence request, is `Unavailable`, not a panic.
+//! 9. `import_known` over an existing or removed generation is refused, and the old value opens;
+//! 10. two connections (tabs) rotating at once get different generations, each key usable from both;
+//! 11. concurrent seals from two connections stop exactly at the seal limit.
 
 #![cfg(all(target_arch = "wasm32", feature = "web"))]
 
@@ -77,7 +81,7 @@ const RFC8032_SECRET: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b32691970
 const RFC8032_PUBLIC: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 const RFC8032_SIG: &str = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
 
-/// Oracle 1: no key of the store can be exported, before or after IndexedDB.
+/// Oracle 1: no key of the store can be exported, before or after `IndexedDB`.
 #[wasm_bindgen_test]
 async fn the_keys_cannot_be_exported_before_or_after_indexeddb() {
     let store = WebCryptoStore::open(&db("export")).await.expect("open");
@@ -160,6 +164,39 @@ async fn the_store_and_an_independent_aes_gcm_open_each_others_values() {
         store.open(1, aad, &framed).await.expect("open"),
         b"sealed elsewhere"
     );
+    store.delete_database().await.expect("cleanup");
+}
+
+/// Oracle 2b: the MAC is HMAC-SHA-256 over `len(context) (u64 LE) || context || message`,
+/// computed independently with the `hmac` and `sha2` crates, so that moving bytes between the
+/// context and the message changes the tag.
+#[wasm_bindgen_test]
+async fn the_mac_is_hmac_sha256_over_the_framed_context_and_message() {
+    use hmac::{Hmac, Mac};
+    let mac_key = [0x5au8; 32];
+    let store = WebCryptoStore::import_known(
+        &db("mac"),
+        KnownKeys {
+            generation: 1,
+            seal: [0x11; 32],
+            mac: mac_key,
+            sign_pkcs8: None,
+        },
+    )
+    .await
+    .expect("import");
+    let reference = |context: &[u8], message: &[u8]| -> [u8; 32] {
+        let mut h = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&mac_key).expect("key");
+        h.update(&(context.len() as u64).to_le_bytes());
+        h.update(context);
+        h.update(message);
+        h.finalize().into_bytes().into()
+    };
+    let ab_c = store.mac(1, b"ab", b"c").await.expect("mac");
+    let a_bc = store.mac(1, b"a", b"bc").await.expect("mac");
+    assert_eq!(ab_c, reference(b"ab", b"c"));
+    assert_eq!(a_bc, reference(b"a", b"bc"));
+    assert_ne!(ab_c, a_bc, "the context boundary is not bound");
     store.delete_database().await.expect("cleanup");
 }
 
@@ -252,6 +289,10 @@ async fn tampered_values_do_not_open() {
         store.open(g1, b"aad", &renamed).await.is_err(),
         "a relabelled value opened"
     );
+    assert!(
+        store.open(g, b"aad", &renamed).await.is_err(),
+        "a value whose header names another generation opened with its own key"
+    );
     assert_eq!(
         store.open(g, b"aad", &sealed).await.expect("open"),
         b"secret"
@@ -318,6 +359,13 @@ async fn a_generation_stops_sealing_at_its_limit_across_a_reopen() {
         ),
         "a fourth seal under the same generation"
     );
+    assert!(
+        matches!(
+            store.seal(g1, b"", b"x").await,
+            Err(KeyOpsError::Key(KeyProviderError::Unavailable(_)))
+        ),
+        "a seal naming the exhausted generation directly"
+    );
     let g2 = store.rotate().await.expect("rotate");
     assert_eq!(seal_now(&store, b"", b"x").await.expect("seal").0, g2);
     store.delete_database().await.expect("cleanup");
@@ -350,31 +398,33 @@ async fn a_reopened_database_opens_what_was_sealed_before() {
     store.delete_database().await.expect("cleanup");
 }
 
-/// Oracle 8: without IndexedDB the store is unavailable, and says so.
+/// Oracle 8: without `IndexedDB` the store is unavailable, and says so.
 #[wasm_bindgen_test]
 async fn no_indexeddb_is_unavailable_not_a_panic() {
     let global = js_sys::global();
     let saved = js_sys::Reflect::get(&global, &"indexedDB".into()).expect("read");
     // shadow the property for this test only (a private window may have none)
     js_sys::Reflect::define_property(
-        &global.clone().unchecked_into(),
+        &global.clone().unchecked_into::<js_sys::Object>(),
         &"indexedDB".into(),
         &js_sys::Object::from_entries(&js_sys::Array::of2(
             &js_sys::Array::of2(&"value".into(), &wasm_bindgen::JsValue::UNDEFINED),
             &js_sys::Array::of2(&"configurable".into(), &true.into()),
         ))
         .expect("descriptor"),
-    );
+    )
+    .expect("shadow indexedDB");
     let result = WebCryptoStore::open(&db("none")).await;
     js_sys::Reflect::define_property(
-        &global.clone().unchecked_into(),
+        &global.clone().unchecked_into::<js_sys::Object>(),
         &"indexedDB".into(),
         &js_sys::Object::from_entries(&js_sys::Array::of2(
             &js_sys::Array::of2(&"value".into(), &saved),
             &js_sys::Array::of2(&"configurable".into(), &true.into()),
         ))
         .expect("descriptor"),
-    );
+    )
+    .expect("restore indexedDB");
     assert!(
         matches!(
             result,
@@ -383,4 +433,88 @@ async fn no_indexeddb_is_unavailable_not_a_panic() {
         "{:?}",
         result.err()
     );
+}
+
+/// Oracle 9: `import_known` never replaces a generation that exists, live or removed (that would
+/// make everything sealed under it unopenable); the value sealed before still opens.
+#[wasm_bindgen_test]
+async fn importing_over_an_existing_generation_is_refused() {
+    let store = WebCryptoStore::open(&db("import-over"))
+        .await
+        .expect("open");
+    let g1 = store.rotate().await.expect("rotate");
+    let (_, sealed) = seal_now(&store, b"aad", b"kept").await.expect("seal");
+    let g2 = store.rotate().await.expect("rotate");
+    store.remove(g2).await.expect("remove");
+    for g in [g1, g2] {
+        let replaced = WebCryptoStore::import_known(
+            &db("import-over"),
+            KnownKeys {
+                generation: g,
+                seal: [9; 32],
+                mac: [9; 32],
+                sign_pkcs8: None,
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                replaced,
+                Err(KeyOpsError::Key(KeyProviderError::Unavailable(_)))
+            ),
+            "import over generation {g} was not refused"
+        );
+    }
+    assert_eq!(
+        store.open(g1, b"aad", &sealed).await.expect("still opens"),
+        b"kept"
+    );
+    assert!(matches!(
+        store.open(g2, b"aad", &sealed).await,
+        Err(KeyOpsError::Key(KeyProviderError::Irrecoverable(_)))
+    ));
+    store.delete_database().await.expect("cleanup");
+}
+
+/// Oracle 10: two connections (two tabs) rotating at the same time get two different
+/// generations, and each one's key is the one stored (a value sealed by either opens from the
+/// other connection).
+#[wasm_bindgen_test]
+async fn two_tabs_rotating_at_once_get_different_generations() {
+    let a = WebCryptoStore::open(&db("two-tabs")).await.expect("open a");
+    let b = WebCryptoStore::open(&db("two-tabs")).await.expect("open b");
+    let (ga, gb) = futures::join!(a.rotate(), b.rotate());
+    let (ga, gb) = (ga.expect("rotate a"), gb.expect("rotate b"));
+    assert_ne!(ga, gb, "both tabs took generation {ga}");
+    let sealed_a = a.seal(ga, b"", b"from a").await.expect("seal a");
+    let sealed_b = b.seal(gb, b"", b"from b").await.expect("seal b");
+    assert_eq!(
+        b.open(ga, b"", &sealed_a).await.expect("b opens a"),
+        b"from a"
+    );
+    assert_eq!(
+        a.open(gb, b"", &sealed_b).await.expect("a opens b"),
+        b"from b"
+    );
+    b.close();
+    a.delete_database().await.expect("cleanup");
+}
+
+/// Oracle 11: the seal count is exact under concurrent seals from two connections: with a limit
+/// of 6, exactly 6 of 12 concurrent seals succeed.
+#[wasm_bindgen_test]
+async fn concurrent_seals_never_exceed_the_limit() {
+    let a = WebCryptoStore::open_with_seal_limit(&db("count"), 6)
+        .await
+        .expect("open a");
+    let g = a.rotate().await.expect("rotate");
+    let b = WebCryptoStore::open_with_seal_limit(&db("count"), 6)
+        .await
+        .expect("open b");
+    let seals = (0..6).flat_map(|_| [a.seal(g, b"", b"x"), b.seal(g, b"", b"x")]);
+    let results = futures::future::join_all(seals).await;
+    let ok = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(ok, 6, "{ok} of 12 seals succeeded under a limit of 6");
+    b.close();
+    a.delete_database().await.expect("cleanup");
 }

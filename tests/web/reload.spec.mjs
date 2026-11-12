@@ -2,10 +2,11 @@
 // reloads it, and the reloaded page opens the value with the key read back from IndexedDB;
 // a second origin cannot open it (the keys belong to the origin).
 //
-// Red by design until the store exists: `tests/web/page/` loads the package
-// `wasm-pack build --target web --features web-page` builds, which has no exports yet.
+// `tests/web/page/` loads the package built by
+// `wasm-pack build --target web --out-dir tests/web/page/pkg -- --features web-page`.
 //
-// Run: npx playwright test tests/web --reporter=json > web-report.json, then
+// Run (from tests/web, with the page served on port 8123):
+// npx playwright test --reporter=json > web-report.json, then
 // python3 scripts/web_test_count.py --playwright web-report.json (fails on 0 passed, and
 // when any of chromium, firefox or webkit ran none).
 import { test, expect } from "@playwright/test";
