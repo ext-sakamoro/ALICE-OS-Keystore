@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- CI: 他の crate の `PREVIOUS_*_SEMANTICS_IDS` は一覧全体としてだけ使える (`contains` / `len` / `is_empty`、全体を回す iterator や for、引数として丸ごと渡す) とし、添字・slice のパターン・`.first` / `next` / `take` などを拒む `scripts/upstream_previous_ids_check.py` と試験を足した (ALICE-Edge と同じ中身の共有 file) 上流は major で一覧を空にする 走査した .rs が 0 件なら失敗 (ci.yml と preflight)
 - CI と preflight: 共有の `scripts/lock_sources_check.py` と試験 (ALICE-Edge と同じ bytes) を持つ 追跡している全ての Cargo.lock が alice-* を git から取り、lock の間で同じ source を引くかを見る (fuzz / tools の lock だけが古い commit に残るのを止める、lock が 1 本も読めなければ失敗)
 - `web::WebCryptoStore` (wasm32, feature `web`): the browser key store 世代ごとの鍵 (AES-256-GCM / HMAC-SHA-256 / Ed25519) を取り出せない WebCrypto の `CryptoKey` で作り IndexedDB に置く (reload を越えて使える) `alice_crypto::AsyncKeyOps` (`current_generation` / `seal` / `open` / `mac`) を実装し、封じた値は `AMS2 ‖ 世代 (u32 BE) ‖ nonce 12 byte ‖ 暗号文と tag` 署名は `sign` / `verifying_key` / `WebCryptoStore::verify`、`rotate` / `remove` / `import_known` / `persisted` / `close` / `delete_database` 乱数 nonce なので 1 世代の封は 2³² 回まで (回数は鍵と一緒に保存し、上限の世代は `rotate` まで封を拒む) 世代の採番と保存は 1 つの IndexedDB transaction (`add`) なので、2 つの tab が同時に `rotate` しても別の世代になり、`import_known` は既にある世代 (生きている・消した) を置き換えず拒む 封の回数も 1 つの transaction で数える MAC は native の `KeyOps::mac` (BLAKE3) と互換でない
 - feature `web-page`: page から呼ぶ JavaScript の関数 (`reset` / `attach` / `rotate` / `seal` / `open` / `anyKeyExtractable`)

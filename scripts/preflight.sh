@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev c16026cbe85a2c6d0b8c0f6333c47c5185837453
+# generator rev b52be62b5b6e407c90b9a7a01c1fb96e64844cf8
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -670,6 +670,16 @@ step "ci.yml / scripts: run"
 (
   gh_step ci.yml.scripts
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_run_tests.py )
+)
+
+step "ci.yml / scripts: Upstream previous identifiers (test, then whole-list uses only)"
+(
+  gh_step ci.yml.scripts
+(
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
+  python3 scripts/test_upstream_previous_ids_check.py
+  python3 scripts/upstream_previous_ids_check.py
+)
 )
 
 step "ci.yml / scripts: run"
