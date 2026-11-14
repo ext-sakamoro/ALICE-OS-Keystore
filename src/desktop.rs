@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `MacosKeychainStore` (macOS only) | implemented: login keychain, one generic password item per generation |
 //! | `WindowsDpapiStore` (Windows only) | implemented: one DPAPI-sealed file per generation under `%LOCALAPPDATA%` |
-//! | `LinuxSecretServiceStore` (Linux only) | implemented: one Secret Service item per generation (duplicates from racing creators resolve to one) |
+//! | `LinuxSecretServiceStore` (Linux only) | implemented: one Secret Service item per generation (creators and rotations serialized by a per-service lock under `$XDG_RUNTIME_DIR`) |
 //!
 //! The implemented stores share one model: one 32-byte random key per generation, each
 //! one item in the operating system's store, created once and never rewritten, and for
