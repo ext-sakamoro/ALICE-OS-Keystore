@@ -38,3 +38,6 @@ doc = false
 
 [workspace]
 members = ["."]
+
+[package.metadata.alice]
+surfaces = []
