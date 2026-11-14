@@ -76,6 +76,7 @@ dependencies = [
  "rustix",
  "secret-service",
  "security-framework",
+ "sha2 0.11.1",
  "uniffi",
  "windows-sys",
  "zeroize",

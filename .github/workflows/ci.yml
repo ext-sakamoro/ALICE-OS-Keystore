@@ -60,6 +60,13 @@ jobs:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # The Linux store's stress tests (tests/linux_secret_service.rs) run 8 rounds each here instead of
+    # their full count (the count when this is unset, as on a developer machine): every Secret Service
+    # operation opens its own connection, and the churn of the full count makes gnome-keyring abort.
+    # Back to the full count once the store reuses one connection per instance. The held-lock test
+    # (current and rotate refused while another holder keeps the lock) does not depend on this.
+    env:
+      ALICE_KEYSTORE_STRESS_ROUNDS: "8"
     strategy:
       fail-fast: false
       matrix:

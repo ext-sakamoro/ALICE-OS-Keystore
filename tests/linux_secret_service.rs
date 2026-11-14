@@ -4,12 +4,16 @@
 //! The model is the one of the macOS and Windows stores (one 32-byte random key per generation,
 //! each one item; `current` creates generation 1 when there is none; `rotate` adds the next one;
 //! a removed older generation and an item that is not 32 bytes are `Irrecoverable`), with one
-//! difference the Secret Service forces: it has no "create unless it exists", so two processes
-//! creating the same generation at once leave two items. Every reader then picks the same one:
+//! difference the Secret Service forces: it has no "create unless it exists", so the store holds a
+//! lock for the service (a file under `$XDG_RUNTIME_DIR`, exclusive across threads and processes)
+//! while `current` / `rotate` read, create and re-read, and a creator waits until its item is
+//! listed before releasing it. The laws: every caller that returns a generation returns the key
+//! later readers get, and concurrent successful rotations return distinct generations (checked
+//! with threads and with separate processes, over many rounds). Duplicates made behind the store's
+//! back (an older version without the lock, another program) are read the same way by everyone:
 //! the earliest `created` (set by the service), ties broken by the object path (assigned by the
-//! service). A creator re-reads after creating and returns the chosen item's key, never its own
-//! unless its item was chosen. The other items are left in place and counted
-//! (`duplicate_count`). For every generation issued a marker item (attribute `keystore-issued`)
+//! service) compared as a string; they are left in place and counted (`duplicate_count`).
+//! For every generation issued a marker item (attribute `keystore-issued`)
 //! follows the key item, so no number is issued twice even when its key item is removed.
 //!
 //! Each test uses its own service name and deletes its items at the end. Items are made and
@@ -260,11 +264,12 @@ fn duplicates_resolve_to_the_earliest_created_then_the_lowest_path_and_are_count
 }
 
 #[test]
-fn creators_that_lose_a_race_return_the_winners_key() {
-    // Secret Service cannot refuse a second item, so racing creators make duplicates; each must
-    // return the chosen item's key. Rounds repeat until a race actually produced a duplicate, so
-    // the losing path is known to have run (a run where no round races fails).
-    for round in 0..40 {
+fn racing_creators_make_one_item_and_agree_on_its_key() {
+    let _slot = stress_slot();
+    // the store's lock serializes creators, so racing creators make one item for generation 1
+    // and every one returns its key (before the lock, racing creators left duplicates and one
+    // could return a key readers do not get)
+    for round in 0..rounds(40) {
         let s = Service::new(&format!("race{round}"));
         let barrier = std::sync::Barrier::new(8);
         let keys: Vec<(u32, [u8; 32])> = std::thread::scope(|scope| {
@@ -286,17 +291,14 @@ fn creators_that_lose_a_race_return_the_winners_key() {
                 .all(|(g, k)| *g == 1 && k.as_slice() == want.as_slice()),
             "round {round}: {keys:?}"
         );
-        if s.items().len() > 1 {
-            assert_eq!(
-                LinuxSecretServiceStore::new(&s.0)
-                    .duplicate_count()
-                    .unwrap(),
-                s.items().len() - 1
-            );
-            return;
-        }
+        assert_eq!(s.items().len(), 1, "round {round}: {:?}", s.items());
+        assert_eq!(
+            LinuxSecretServiceStore::new(&s.0)
+                .duplicate_count()
+                .unwrap(),
+            0
+        );
     }
-    panic!("no round produced a duplicate: the losing path was not exercised");
 }
 
 #[test]
@@ -376,4 +378,293 @@ fn removing_both_the_newest_key_and_its_marker_frees_the_number() {
     s.remove_marker("2");
     assert_eq!(store.current().unwrap().0, 1);
     assert_eq!(store.rotate().unwrap(), 2);
+}
+
+// The laws the two racing tests above sample once per run, checked over many rounds (a run of the
+// pair against a real gnome-keyring disagreed about 3 times in 37):
+//   current(): every caller that returns generation g returns the key every later reader of g gets
+//     (`by_generation(g)`), so data sealed by any caller opens again;
+//   rotate(): each successful call adds a generation of its own, so concurrent successful calls
+//     return distinct generations.
+// A failing round prints every key item (generation, created, object path) of its service.
+
+const STRESS_ROUNDS: usize = 60;
+
+/// The rounds a stress test runs: `full` unless ALICE_KEYSTORE_STRESS_ROUNDS sets another count
+/// (CI sets a smaller one explicitly, while the per-operation connections make the Secret Service
+/// daemon abort under heavy churn); an unparsable or zero value fails rather than running nothing
+fn rounds(full: usize) -> usize {
+    match std::env::var("ALICE_KEYSTORE_STRESS_ROUNDS") {
+        Err(_) => full,
+        Ok(v) => {
+            let n: usize = v
+                .parse()
+                .unwrap_or_else(|_| panic!("ALICE_KEYSTORE_STRESS_ROUNDS={v} is not a count"));
+            assert!(
+                n > 0,
+                "ALICE_KEYSTORE_STRESS_ROUNDS=0 would compare nothing"
+            );
+            n
+        }
+    }
+}
+
+/// Held by every stress test, so two of them never run at once (their connections together are
+/// the churn that makes the daemon abort)
+static STRESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn stress_slot() -> std::sync::MutexGuard<'static, ()> {
+    STRESS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+/// Rotators per round: enough that, without the lock, two of them claim one generation in most runs
+const ROTATORS: usize = 12;
+
+#[test]
+fn racing_creators_agree_on_one_key_in_every_round() {
+    let _slot = stress_slot();
+    for round in 0..rounds(STRESS_ROUNDS) {
+        let s = Service::new(&format!("stress-create{round}"));
+        let barrier = std::sync::Barrier::new(8);
+        let got: Vec<(u32, [u8; 32])> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let store = LinuxSecretServiceStore::new(&s.0);
+                        barrier.wait();
+                        let (g, k) = store.current().unwrap();
+                        (g, *k.as_bytes())
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let read = LinuxSecretServiceStore::new(&s.0).by_generation(1).unwrap();
+        let disagree = got
+            .iter()
+            .filter(|(g, k)| *g != 1 || k.as_slice() != read.as_bytes().as_slice())
+            .count();
+        assert_eq!(
+            disagree,
+            0,
+            "round {round}: {disagree} of 8 callers hold a key later readers do not get; items {:?}",
+            s.items()
+        );
+    }
+}
+
+#[test]
+fn racing_rotations_issue_each_generation_once_in_every_round() {
+    let _slot = stress_slot();
+    for round in 0..rounds(STRESS_ROUNDS) {
+        let s = Service::new(&format!("stress-rotate{round}"));
+        LinuxSecretServiceStore::new(&s.0).current().unwrap();
+        let barrier = std::sync::Barrier::new(ROTATORS);
+        let mut got: Vec<u32> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..ROTATORS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let store = LinuxSecretServiceStore::new(&s.0);
+                        barrier.wait();
+                        store.rotate().unwrap()
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            (2..2 + ROTATORS as u32).collect::<Vec<_>>(),
+            "round {round}: concurrent rotations shared a generation; items {:?}",
+            s.items()
+        );
+    }
+}
+
+// The same laws across processes, not only threads: the store's lock must exclude another process
+// as it excludes another thread. The test binary is re-invoked as `helper_process` (it does
+// nothing unless ALICE_KEYSTORE_TEST_HELPER is set); the children start together when a file appears.
+
+const PROCESS_ROUNDS: usize = 20;
+
+#[test]
+fn helper_process() {
+    let Ok(op) = std::env::var("ALICE_KEYSTORE_TEST_HELPER") else {
+        return;
+    };
+    let service = std::env::var("ALICE_KEYSTORE_TEST_SERVICE").unwrap();
+    let go = std::path::PathBuf::from(std::env::var("ALICE_KEYSTORE_TEST_GO").unwrap());
+    let store = LinuxSecretServiceStore::new(&service);
+    while !go.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    match op.as_str() {
+        "current" => {
+            let (g, k) = store.current().unwrap();
+            let hex: String = k.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            println!("RESULT {g} {hex}");
+        }
+        "rotate" => println!("RESULT {}", store.rotate().unwrap()),
+        other => panic!("unknown helper operation {other}"),
+    }
+}
+
+/// Run `n` children doing `op` on `service` at once; each child's RESULT line (all must report one)
+fn in_processes(op: &str, service: &str, n: usize) -> Vec<String> {
+    let dir = tempfile_dir();
+    let go = dir.join("go");
+    let children: Vec<_> = (0..n)
+        .map(|_| {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "helper_process",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("ALICE_KEYSTORE_TEST_HELPER", op)
+                .env("ALICE_KEYSTORE_TEST_SERVICE", service)
+                .env("ALICE_KEYSTORE_TEST_GO", &go)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    std::fs::write(&go, b"").unwrap();
+    let results: Vec<String> = children
+        .into_iter()
+        .map(|c| {
+            let out = c.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "a child failed: {stdout} {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            stdout
+                .lines()
+                // libtest prints `test helper_process ... ` on the same line before the output
+                .find_map(|l| l.split_once("RESULT ").map(|(_, r)| r.trim().to_owned()))
+                .unwrap_or_else(|| panic!("a child printed no result: {stdout}"))
+        })
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    // nothing compared is a failure
+    assert_eq!(results.len(), n);
+    results
+}
+
+fn tempfile_dir() -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let d = std::env::temp_dir().join(format!(
+        "alice-os-keystore-go.{}.{nanos}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn creators_in_separate_processes_agree_on_one_key() {
+    let _slot = stress_slot();
+    for round in 0..rounds(PROCESS_ROUNDS) {
+        let s = Service::new(&format!("proc-create{round}"));
+        let got = in_processes("current", &s.0, 8);
+        let read = LinuxSecretServiceStore::new(&s.0).by_generation(1).unwrap();
+        let want: String = read.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let disagree = got.iter().filter(|r| **r != format!("1 {want}")).count();
+        assert_eq!(
+            disagree,
+            0,
+            "round {round}: {disagree} of 8 processes hold a key later readers do not get; items {:?}",
+            s.items()
+        );
+    }
+}
+
+#[test]
+fn rotations_in_separate_processes_issue_each_generation_once() {
+    let _slot = stress_slot();
+    for round in 0..rounds(PROCESS_ROUNDS) {
+        let s = Service::new(&format!("proc-rotate{round}"));
+        LinuxSecretServiceStore::new(&s.0).current().unwrap();
+        let mut got: Vec<u32> = in_processes("rotate", &s.0, ROTATORS)
+            .iter()
+            .map(|r| r.parse().unwrap())
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            (2..2 + ROTATORS as u32).collect::<Vec<_>>(),
+            "round {round}: rotations in separate processes shared a generation; items {:?}",
+            s.items()
+        );
+    }
+}
+
+#[test]
+fn a_held_lock_makes_current_and_rotate_unavailable_at_the_deadline() {
+    let s = Service::new("held-lock");
+    let deadline = std::time::Duration::from_millis(300);
+    let store = LinuxSecretServiceStore::new(&s.0).lock_deadline(deadline);
+    store.current().unwrap();
+    let path = store
+        .lock_path()
+        .expect("XDG_RUNTIME_DIR is set (scripts/with_keyring.sh)");
+    let holder = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    holder.lock().unwrap();
+    for (name, call) in [
+        (
+            "current",
+            Box::new(|| store.current().map(|_| ())) as Box<dyn Fn() -> _>,
+        ),
+        ("rotate", Box::new(|| store.rotate().map(|_| ()))),
+    ] {
+        let start = std::time::Instant::now();
+        match call() {
+            Err(KeyProviderError::Unavailable(m)) => {
+                assert!(m.contains("lock past the deadline"), "{name}: {m}")
+            }
+            other => panic!("{name} under a held lock: {other:?}"),
+        }
+        let waited = start.elapsed();
+        assert!(
+            waited >= deadline && waited < std::time::Duration::from_secs(10),
+            "{name} waited {waited:?}"
+        );
+    }
+    drop(holder);
+    assert_eq!(store.rotate().unwrap(), 2);
+}
+
+#[test]
+fn the_lock_lives_in_a_private_directory_under_the_runtime_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Service::new("lock-file");
+    let store = LinuxSecretServiceStore::new(&s.0);
+    store.current().unwrap();
+    let path = store
+        .lock_path()
+        .expect("XDG_RUNTIME_DIR is set (scripts/with_keyring.sh)");
+    let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+    assert_eq!(path.parent().unwrap().parent().unwrap(), runtime);
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(path.parent().unwrap()), 0o700);
+    assert_eq!(mode(&path), 0o600);
+    assert!(!path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("lock-file"));
 }
