@@ -16,6 +16,7 @@
 - `rustix` を 1.1.5 から 1.1.6 に (Cargo.lock / fuzz、RUSTSEC-2026-0486: xattr の関数が長さ 0 の buffer で書いていない byte を初期化済みにする、zbus / secret-service と uniffi の経路で入る) この crate は xattr の関数を呼ばないが、修正版があるので上げた
 
 ### Fixed
+- `LinuxSecretServiceStore`: 同時に `current()` を呼んだ呼び出し側の 1 つが、後で読む側とは別の世代 1 の鍵を受け取ることがあった その鍵で封じたデータは後から復号できない (データ消失) 同時の `rotate()` が同じ世代を 2 回返すこともあった 原因は 2 つ: 重複から選ぶ規則の同点比較が object path の文字列順で作成順と一致しない (`…/100` が `…/99` より先) / 作ったばかりの item は検索に出るまで間があり、読み直しても競合を見落とす Secret Service には「無ければ作る」が無いので、`current()` と `rotate()` が読む・作る・読み直す間、service ごとの排他 lock を持つようにした (`$XDG_RUNTIME_DIR/alice-os-keystore/` の file、directory 0700・file 0600、名前は service 名の SHA-256、thread と process の両方を排除し、終了で外れる) 作った item が読む側の検索に出るのを確かめてから lock を外す lock の待ちは期限付き (`lock_deadline`、既定 30 秒、過ぎると `Unavailable`) `XDG_RUNTIME_DIR` が無いと `current()` / `rotate()` は `Unavailable` 既存の重複から選ぶ規則は変えていない (既に封じたデータの鍵が変わるため) lock を持たない古い版が同時に動くと、その組み合わせでは今も競合しうる 試験: thread と別 process の両方で多数回競わせる試験を足した (修正前は Linux arm64 機で 5 回中 3 回失敗)
 - `ForeignKeyVault`: Swift / Kotlin の key store が `ForeignVaultError` 以外の error を投げると process が abort していた `Unavailable` に変換する (元の文言は持ち込まない) `tools/foreign-vault-probe` で実際の FFI を通して `scripts/apple_check.sh` で確かめる
 - README: 自分の crate の生成 Swift とこの crate の生成 Swift は 1 つの Swift module で compile する必要があることを書いた
 
