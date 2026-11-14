@@ -4,7 +4,10 @@
 # Runs <command> with a Secret Service: on Linux inside a private D-Bus session
 # (dbus-run-session) with gnome-keyring started and its login keyring unlocked, so
 # the Linux key store's tests talk to a real Secret Service. Elsewhere it runs the
-# command unchanged. The keyring password is a throwaway, used only inside this private bus.
+# command unchanged. The keyring password is a throwaway, used only inside this private bus, and the
+# keyring files are kept under the session's temporary directory (XDG_DATA_HOME), never in the caller's
+# own keyrings: a machine user's login keyring would not open with the throwaway password, and the tests'
+# items do not belong in it.
 #
 # The daemon runs in the foreground as a child of this script, with its own output kept in a
 # log file (ALICE_KEYRING_LOG, default under the session's temporary directory). The command
@@ -13,6 +16,11 @@
 # nothing replaces it: calls fail at once instead of reaching a fresh locked keyring. If the
 # daemon is gone, or no longer owns the name, when the command ends, the script fails and
 # prints the log, whatever the command returned.
+#
+# The private bus is also recorded by dbus-monitor from before the daemon starts (ALICE_KEYRING_BUS_LOG,
+# default beside the daemon log): Secret Service method calls with their sender, errors, and
+# NameOwnerChanged (a connection that leaves the bus). Its last lines are printed with the daemon log,
+# so a daemon that dies during the command shows which connection sent the last calls and which left.
 set -euo pipefail
 
 if [ "$(uname -s)" != Linux ]; then
@@ -30,10 +38,12 @@ owner_pid() {
 show_log() {
   echo "with_keyring: gnome-keyring-daemon log ($ALICE_KEYRING_LOG):" >&2
   sed 's/^/  | /' "$ALICE_KEYRING_LOG" >&2 || true
+  echo "with_keyring: D-Bus messages, last 400 lines ($ALICE_KEYRING_BUS_LOG):" >&2
+  tail -n 400 "$ALICE_KEYRING_BUS_LOG" 2>/dev/null | sed 's/^/  > /' >&2 || true
 }
 
 if [ "${ALICE_KEYRING_SESSION:-}" != 1 ]; then
-  for tool in dbus-run-session dbus-send gnome-keyring-daemon; do
+  for tool in dbus-run-session dbus-send dbus-monitor gnome-keyring-daemon; do
     command -v "$tool" >/dev/null || { echo "with_keyring: $tool not found (install dbus and gnome-keyring)" >&2; exit 2; }
   done
   tmp=$(mktemp -d)
@@ -53,14 +63,21 @@ if [ "${ALICE_KEYRING_SESSION:-}" != 1 ]; then
   </policy>
 </busconfig>
 EOF
-  mkdir -m 700 "$tmp/run"
+  mkdir -m 700 "$tmp/run" "$tmp/data"
   export ALICE_KEYRING_LOG="${ALICE_KEYRING_LOG:-$tmp/gnome-keyring.log}"
-  ALICE_KEYRING_SESSION=1 XDG_RUNTIME_DIR="$tmp/run" exec dbus-run-session --config-file="$tmp/session.conf" -- "$0" "$@"
+  export ALICE_KEYRING_BUS_LOG="${ALICE_KEYRING_BUS_LOG:-$tmp/bus.log}"
+  ALICE_KEYRING_SESSION=1 XDG_RUNTIME_DIR="$tmp/run" XDG_DATA_HOME="$tmp/data" exec dbus-run-session --config-file="$tmp/session.conf" -- "$0" "$@"
 fi
 
 # inside the session: create / unlock the login keyring in a foreground daemon, then start its
 # secrets component on the bus
 : >"$ALICE_KEYRING_LOG"
+# the bus recording starts first, so the daemon's whole life is in it
+dbus-monitor --session "type='method_call',interface='org.freedesktop.Secret.Service'" \
+  "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged'" "type='error'" \
+  >"$ALICE_KEYRING_BUS_LOG" 2>&1 &
+monitor=$!
+trap 'kill "$monitor" 2>/dev/null || true' EXIT
 printf 'throwaway' | G_MESSAGES_DEBUG=all gnome-keyring-daemon --foreground --unlock --components=secrets >>"$ALICE_KEYRING_LOG" 2>&1 &
 daemon=$!
 for _ in $(seq 100); do

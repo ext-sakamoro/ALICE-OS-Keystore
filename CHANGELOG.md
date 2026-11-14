@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- CI と preflight: `scripts/with_keyring.sh` が private bus を `dbus-monitor` で記録し、daemon の log と一緒に最後の 400 行を出す (Secret Service の呼び出しと送り手、接続が bus を離れた NameOwnerChanged、error) daemon が command の途中で落ちた時にどの接続が最後に呼んだかが残る keyring の file は実行ごとの一時 directory (`XDG_DATA_HOME`) に置き、利用者自身の login keyring には触れない (捨ての password では開かず `locked` で全試験が落ち、試験の item も入っていた) 起動しない daemon は command の前に exit 2 で止まる (試験あり)
 - CI と preflight: 共有 file を ALICE-Law の表と比べる step (`Shared files equal ALICE-Law's table`、`scripts/test_shared_files.py` と `scripts/shared_files.sh`) を足し、表の版を `.github/shared-files-pin` で固定した (ALICE-Law ab12888、表と検査器は SHA-256 で照合) 写しが表の bytes (pending の行は移行先) と違う・表に無い共有 file を持つ・1 件も比べないと失敗 写しのうち `scripts/advisory_hold_guard.py` / `scripts/id_move_check.py` と試験を表の bytes に揃えた 適合宣言 G11 の (c) が成り立つ ((a) / (b) の表 `conformance/g11.toml` はまだ無いので fail-known のまま)
 - CI: 他の crate の `PREVIOUS_*_SEMANTICS_IDS` は一覧全体としてだけ使える (`contains` / `len` / `is_empty`、全体を回す iterator や for、引数として丸ごと渡す) とし、添字・slice のパターン・`.first` / `next` / `take` などを拒む `scripts/upstream_previous_ids_check.py` と試験を足した (ALICE-Edge と同じ中身の共有 file) 上流は major で一覧を空にする 走査した .rs が 0 件なら失敗 (ci.yml と preflight)
 - CI と preflight: 共有の `scripts/lock_sources_check.py` と試験 (ALICE-Edge と同じ bytes) を持つ 追跡している全ての Cargo.lock が alice-* を git から取り、lock の間で同じ source を引くかを見る (fuzz / tools の lock だけが古い commit に残るのを止める、lock が 1 本も読めなければ失敗)
