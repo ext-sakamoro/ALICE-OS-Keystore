@@ -89,7 +89,7 @@ evidence = [
     ".github/workflows/public-text.yml runs scripts/public_text.sh (`.github/workflows/public-text.yml#name: Public text (tree at HEAD, then the pushed commits)`), which fetches ALICE-Law's scripts/public_text_check.py at the revision .github/public-text-pin names and refuses it unless its SHA-256 is the pinned one",
     "scripts/public_text.sh exits 2 when it compared nothing or cannot read its pin",
 ]
-mutant = "measured 2026-11-14 on main 99ac2a4: scripts/public_text.sh exits 0; with a committed file holding a private network address it exits 1 (`found: docs-mutant.txt:1: private address`, 1 finding in 106 files)"
+mutant = "measured 2026-11-14 on main 99ac2a4: scripts/public_text.sh exits 0; with a committed file holding a private network address it exits 1 (1 finding in 106 files: a private address in the mutant file)"
 since = ""
 
 [G13]
