@@ -24,7 +24,11 @@
   - id not ignored in deny.toml                        -> 1
   - vulnerability id not ignored in .cargo/audit.toml  -> 1
   - unmaintained id not in .cargo/audit.toml           -> 0 (cargo audit only warns)
-  - no holds / no Cargo.lock / Cargo.lock empty        -> 2 (nothing compared)
+  - no holds file / no Cargo.lock / Cargo.lock empty   -> 2 (nothing compared)
+  - no holds, and no ignore anywhere                   -> 0
+  - no holds, an id ignored in deny.toml / audit.toml / a cargo audit command line -> 1 (an ignore
+    without a hold)
+  - no holds, deny.toml without `unused-ignored-advisory = "deny"` -> 1
   - deny.toml without `unused-ignored-advisory = "deny"` -> 1 (an ignore of an advisory that no longer
     matches would pass silently)
   - `unused-ignored-advisory = "warn"`                   -> 1
@@ -139,7 +143,9 @@ def main():
             ("not in deny.toml", BASE, hold(), (), None, 1, "not ignored in deny.toml"),
             ("vulnerability not in audit.toml", BASE, hold(), None, (), 1, "not ignored in .cargo/audit.toml"),
             ("unmaintained not in audit.toml", BASE, hold(kind="unmaintained"), None, (), 0, "held until"),
-            ("no holds", BASE, "", None, None, 2, "holds nothing"),
+            ("no holds, no ignores", BASE, "", (), (), 0, "ignore nothing"),
+            ("no holds, deny.toml ignores an id", BASE, "", ("RUSTSEC-0000-0001",), (), 1, "deny.toml ignores RUSTSEC-0000-0001 without a hold"),
+            ("no holds, audit.toml ignores an id", BASE, "", (), ("RUSTSEC-0000-0001",), 1, ".cargo/audit.toml ignores RUSTSEC-0000-0001 without a hold"),
             ("no holds file", BASE, None, None, None, 2, "not found"),
             ("no Cargo.lock", None, hold(), None, None, 2, "not found"),
             ("empty Cargo.lock", [], hold(), None, None, 2, "no packages"),
@@ -158,6 +164,10 @@ def main():
             ("cli ignore of a crate gone from Cargo.lock", [pkg("app", "1.0.0", ["mid"]), pkg("mid", "1.0.0")], hold(),
              {"workflow": "run: cargo audit --ignore RUSTSEC-0000-0001\n"}, 1, "--ignore RUSTSEC-0000-0001: leaf 0.1.0 is not in Cargo.lock"),
             ("holds, no ignore read", BASE, hold(kind="unmaintained"), {"deny_ids": (), "audit_ids": ()}, 1, "0 ignores"),
+            ("no holds, a cargo audit --ignore", BASE, "",
+             {"deny_ids": (), "audit_ids": (), "workflow": "run: cargo audit --ignore RUSTSEC-0000-0001\n"}, 1, "without a hold"),
+            ("no holds, unused ignores not denied", BASE, "", {"deny_ids": (), "audit_ids": (), "unused": None}, 1,
+             "unused-ignored-advisory"),
             ("quoted ids held", BASE, hold(),
              {"workflow": "run: cargo audit --ignore \"RUSTSEC-0000-0001\" --ignore='RUSTSEC-0000-0001'\n"},
              0, "2 cargo audit --ignore"),

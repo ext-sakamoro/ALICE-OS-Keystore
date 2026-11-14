@@ -31,8 +31,11 @@ hold is checked against Cargo.lock:
     since an ignore that cannot be read must not count as none
   - read nothing: with holds, the ignore lists and command lines together must give at
     least one ignore (otherwise they were not read)
+  - no holds: an empty advisory_holds.toml passes only when deny.toml, .cargo/audit.toml and the
+    cargo audit command lines ignore nothing (and deny.toml denies unused ignores); an ignore with
+    no hold fails, so an empty hold list cannot hide one
 
-It fails when it could not compare anything (no Cargo.lock, no packages, no holds),
+It fails when it could not compare anything (no Cargo.lock, no packages, no holds file),
 so it never passes vacuously.
 
     python3 scripts/advisory_hold_guard.py [--dir .] [--today YYYY-MM-DD]
@@ -156,13 +159,22 @@ def check(root, today):
     if not holds_file.is_file():
         return 2, [f"{holds_file} not found (nothing to compare)"]
     holds = tomllib.loads(holds_file.read_text(encoding="utf-8")).get("hold", [])
-    if not holds:
-        return 2, ["advisory_holds.toml holds nothing (nothing to compare)"]
     deny = root / "deny.toml"
     audit = root / ".cargo" / "audit.toml"
     deny_table = tomllib.loads(deny.read_text(encoding="utf-8")) if deny.is_file() else {}
     deny_ids = ignored_ids(deny_table)
     audit_ids = ignored_ids(tomllib.loads(audit.read_text(encoding="utf-8"))) if audit.is_file() else set()
+    if not holds:
+        # nothing is held: the ignore lists and the command lines must ignore nothing either
+        errors = [f"deny.toml ignores {i} without a hold" for i in sorted(deny_ids)]
+        errors += [f".cargo/audit.toml ignores {i} without a hold" for i in sorted(audit_ids)]
+        errors += [f"{where}: cargo audit --ignore {arg} without a hold" for where, _, arg in cli_ignores(root)]
+        if (deny_table.get("advisories") or {}).get("unused-ignored-advisory") != "deny":
+            errors.append('deny.toml [advisories] does not set unused-ignored-advisory = "deny"')
+        if errors:
+            return 1, errors
+        return 0, [f"0 holds, and deny.toml, .cargo/audit.toml and the cargo audit command lines ignore "
+                   f"nothing ({len(packages)} packages in Cargo.lock)"]
 
     errors, notes = [], []
     held = {(h["crate"], h["version"]) for h in holds}

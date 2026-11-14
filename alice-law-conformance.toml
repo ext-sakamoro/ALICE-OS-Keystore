@@ -81,7 +81,7 @@ status = "fail-known"
 evidence = []
 mutant = ""
 since = ""
-note = "the shared files are not compared: .github/shared-files-pin is absent and .github/workflows/ci.yml runs no shared-files step, while ALICE-Law's conformance/shared-files.toml lists copies for this crate; the gates' own checkers (canary, zero-compared test) are not tabled either (no conformance/g11.toml)"
+note = "(c) holds: every shared file is compared with ALICE-Law's table at .github/shared-files-pin (`.github/workflows/ci.yml#- name: Shared files equal ALICE-Law's table`, scripts/shared_files.sh: 22 copies, 0 findings at ALICE-Law ab128886); (a) and (b) do not: the gates' own checkers (canary, zero-compared test) are not tabled (no conformance/g11.toml)"
 
 [G12]
 status = "pass"

@@ -139,3 +139,10 @@ jobs:
       # scripts/lock_sources.toml); no lock read fails
       - run: python3 scripts/test_lock_sources_check.py
       - run: python3 scripts/lock_sources_check.py
+      # ALICE-Law G11 (c): every shared file this crate carries holds the bytes ALICE-Law's table records
+      # for it (its target where the row is pending), the table fetched at .github/shared-files-pin
+      # (SHA-256 pinned); a mismatch, an unlisted shared copy or nothing compared fails
+      - name: Shared files equal ALICE-Law's table
+        run: |
+          python3 scripts/test_shared_files.py
+          scripts/shared_files.sh
