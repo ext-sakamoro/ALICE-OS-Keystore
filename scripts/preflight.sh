@@ -973,7 +973,7 @@ step "ci.yml / test: Test (default features)"
 (
   gh_step ci.yml.test
 (
-  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings" ALICE_KEYSTORE_STRESS_ROUNDS="8"
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
   if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
   scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test
 )
@@ -983,7 +983,7 @@ step "ci.yml / test: Test (all features)"
 (
   gh_step ci.yml.test
 (
-  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings" ALICE_KEYSTORE_STRESS_ROUNDS="8"
+  export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
   if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
   scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=8,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
 )
