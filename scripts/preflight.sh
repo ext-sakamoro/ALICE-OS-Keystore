@@ -675,6 +675,12 @@ step "ci.yml / scripts: run"
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_run_tests.py )
 )
 
+step "ci.yml / scripts: run"
+(
+  gh_step ci.yml.scripts
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_web_test_count.py )
+)
+
 step "ci.yml / scripts: Upstream previous identifiers (test, then whole-list uses only)"
 (
   gh_step ci.yml.scripts

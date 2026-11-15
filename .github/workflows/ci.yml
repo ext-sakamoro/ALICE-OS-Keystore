@@ -119,6 +119,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 scripts/test_run_tests.py
+      # the web job's Playwright report reader: every result that did not pass is printed with its error
+      - run: python3 scripts/test_web_test_count.py
       # another crate's PREVIOUS_*_SEMANTICS_IDS is used only as a whole list (an upstream empties it on
       # a major version; scripts/upstream_previous_ids_check.py, shared with the other ALICE crates)
       - name: Upstream previous identifiers (test, then whole-list uses only)
