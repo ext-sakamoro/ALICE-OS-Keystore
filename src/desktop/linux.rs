@@ -44,6 +44,26 @@
 //! model in `desktop`); the store looks for a marker before making one, and a duplicate marker
 //! from a race is harmless (only its presence counts).
 //!
+//! A store opens one connection to the session bus and one encrypted session with the service on
+//! first use and keeps them for its lifetime, shared by every call of that instance (calls of one
+//! instance take turns on it). Before, every call opened its own connection and session; the churn
+//! of connections that came and went every few milliseconds is what gnome-keyring was handling
+//! when it aborted. Each D-Bus call waits at most [`LinuxSecretServiceStore::call_timeout`] (5 s by
+//! default) for its answer. A call that finds the service unreachable (no answer in time, the
+//! connection gone, the daemon restarted) drops the connection and runs once more on a new one; a
+//! second failure is [`KeyProviderError::Unavailable`]. Reads simply run again. A create that runs
+//! again first looks for the item it was making, since a lost answer does not mean the service did
+//! not create it: an item holding this call's key is adopted, any other item means another creator
+//! got there first, and only when the generation has no item is it created again. In the worst case
+//! one call therefore takes the lock wait, plus two attempts of (the calls it makes + 2 for a new
+//! connection) times the call timeout, plus the listing wait of a create.
+//!
+//! The session's key (the AES key both sides derive from the Diffie-Hellman exchange, used to
+//! encrypt the secrets on the bus) is held in memory for as long as the store lives, instead of for
+//! one call; dropping the store ends the session and closes the connection. It is kept inside the
+//! `secret-service` crate, which does not zero it when the session is dropped and gives no access
+//! to it; the key bytes this crate reads from the service are zeroed after use, as before.
+//!
 //! Without a reachable service (no D-Bus session bus, as on a headless machine), a locked
 //! keyring that cannot be unlocked, or no default collection, every call is
 //! [`KeyProviderError::Unavailable`], so the caller can fall back to a passphrase.
@@ -52,6 +72,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use secret_service::blocking::{Collection, Item, SecretService};
@@ -69,6 +90,10 @@ const CONTENT_TYPE: &str = "application/octet-stream";
 
 /// How long `current` / `rotate` wait for the service's lock by default
 const LOCK_DEADLINE: Duration = Duration::from_secs(30);
+/// How long one D-Bus call waits for its answer by default
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+/// The error of a service that cannot be reached: the one kind of failure a new connection can cure
+const UNREACHABLE: &str = "the Secret Service cannot be reached";
 /// How long a creator waits for its new item to be listed by the search readers use
 const LISTED_DEADLINE: Duration = Duration::from_secs(10);
 /// The pause between attempts while waiting for the lock or for an item to be listed
@@ -81,6 +106,28 @@ const LOCK_TIMEOUT: KeyProviderError =
 pub struct LinuxSecretServiceStore {
     service: String,
     lock_deadline: Duration,
+    call_timeout: Duration,
+    /// The connection and session of this store, made on first use and kept
+    session: Mutex<Option<SecretService<'static>>>,
+}
+
+/// Which run of a call this is: the first, or the one on a new connection after the service could
+/// not be reached
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Attempt {
+    First,
+    Retry,
+}
+
+/// What a create that runs again finds for its generation
+#[derive(Debug, PartialEq, Eq)]
+enum Found {
+    /// No item: the first run did not create one
+    Nothing,
+    /// An item holding this call's key: the first run created it; `chosen` as in `create`
+    Ours { chosen: bool },
+    /// Items, none holding this call's key: another creator got there first
+    Others,
 }
 
 /// The service's lock, held while the file stays open (closing it releases the lock)
@@ -95,9 +142,7 @@ fn unavailable(e: &SsError) -> KeyProviderError {
             "the keyring is locked or access was refused"
         }
         SsError::NoResult => "the Secret Service has no default keyring",
-        SsError::Unavailable | SsError::Zbus(_) | SsError::ZbusFdo(_) => {
-            "the Secret Service cannot be reached"
-        }
+        SsError::Unavailable | SsError::Zbus(_) | SsError::ZbusFdo(_) => UNREACHABLE,
         _ => "the Secret Service answered unexpectedly",
     })
 }
@@ -216,13 +261,65 @@ fn lock_service(service: &str, deadline: Duration) -> Result<ServiceLock, KeyPro
     }
 }
 
-fn with_collection<T>(
-    f: impl FnOnce(&Collection<'_>) -> Result<T, KeyProviderError>,
+fn is_unreachable(e: &KeyProviderError) -> bool {
+    matches!(e, KeyProviderError::Unavailable(m) if *m == UNREACHABLE)
+}
+
+/// Run `op` on the session in `slot`, made by `connect` when there is none; when the service cannot
+/// be reached, the session is dropped and `op` runs once more ([`Attempt::Retry`]) on a new one, and
+/// a second such failure is returned. Other errors are returned at once.
+fn with_retry<S, T>(
+    slot: &mut Option<S>,
+    mut connect: impl FnMut() -> Result<S, KeyProviderError>,
+    mut op: impl FnMut(&S, Attempt) -> Result<T, KeyProviderError>,
 ) -> Result<T, KeyProviderError> {
-    let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| unavailable(&e))?;
-    let collection = ss.get_default_collection().map_err(|e| unavailable(&e))?;
-    collection.ensure_unlocked().map_err(|e| unavailable(&e))?;
-    f(&collection)
+    let mut last = KeyProviderError::Unavailable(UNREACHABLE);
+    for attempt in [Attempt::First, Attempt::Retry] {
+        if slot.is_none() {
+            match connect() {
+                Ok(session) => *slot = Some(session),
+                Err(e) if is_unreachable(&e) => {
+                    last = e;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        match op(slot.as_ref().expect("a session was just made"), attempt) {
+            Ok(v) => return Ok(v),
+            Err(e) if is_unreachable(&e) => {
+                *slot = None;
+                last = e;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
+/// The create of `attempt`: on a run after a lost answer, look first (`look`) and create (`create`)
+/// only when the generation has no item
+fn create_or_adopt(
+    attempt: Attempt,
+    look: impl FnOnce() -> Result<Found, KeyProviderError>,
+    create: impl FnOnce() -> Result<bool, KeyProviderError>,
+) -> Result<bool, KeyProviderError> {
+    if attempt == Attempt::Retry {
+        match look()? {
+            Found::Ours { chosen } => return Ok(chosen),
+            Found::Others => return Ok(false),
+            Found::Nothing => {}
+        }
+    }
+    create()
+}
+
+/// A connection to the session bus whose calls wait at most `timeout`, with an encrypted session
+fn connect(timeout: Duration) -> Result<SecretService<'static>, KeyProviderError> {
+    let conn = zbus::blocking::connection::Builder::session()
+        .and_then(|b| b.method_timeout(timeout).build())
+        .map_err(|_| KeyProviderError::Unavailable(UNREACHABLE))?;
+    SecretService::connect_with_existing(EncryptionType::Dh, conn).map_err(|e| unavailable(&e))
 }
 
 impl LinuxSecretServiceStore {
@@ -240,7 +337,63 @@ impl LinuxSecretServiceStore {
         Self {
             service: service.to_owned(),
             lock_deadline: LOCK_DEADLINE,
+            call_timeout: CALL_TIMEOUT,
+            session: Mutex::new(None),
         }
+    }
+
+    /// The same store, waiting at most `timeout` for the answer to each D-Bus call (5 s by
+    /// default); a call with no answer in time is retried once on a new connection, then
+    /// [`KeyProviderError::Unavailable`]
+    #[must_use]
+    pub fn call_timeout(mut self, timeout: Duration) -> Self {
+        self.call_timeout = timeout;
+        self
+    }
+
+    /// Run `op` on the default collection over this store's connection (made on first use and
+    /// kept), once more on a new connection when the service cannot be reached
+    fn with_collection<T>(
+        &self,
+        mut op: impl FnMut(&Collection<'_>, Attempt) -> Result<T, KeyProviderError>,
+    ) -> Result<T, KeyProviderError> {
+        let mut slot = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        with_retry(
+            &mut slot,
+            || connect(self.call_timeout),
+            |ss, attempt| {
+                let collection = ss.get_default_collection().map_err(|e| unavailable(&e))?;
+                collection.ensure_unlocked().map_err(|e| unavailable(&e))?;
+                op(&collection, attempt)
+            },
+        )
+    }
+
+    /// What the items of `generation` say about `key`, for a create that runs again
+    fn look(
+        &self,
+        c: &Collection<'_>,
+        generation: KeyGeneration,
+        key: &Key,
+    ) -> Result<Found, KeyProviderError> {
+        let items = self.generation_items(c, generation)?;
+        let mut ours = None;
+        for item in &items {
+            let mut bytes = item.get_secret().map_err(|e| unavailable(&e))?;
+            let same = bytes.as_slice() == key.as_bytes().as_slice();
+            bytes.zeroize();
+            if same {
+                ours = Some(item.item_path.clone());
+                break;
+            }
+        }
+        Ok(match ours {
+            Some(path) => Found::Ours {
+                chosen: choose(&items)?.is_some_and(|c| c.item_path == path),
+            },
+            None if items.is_empty() => Found::Nothing,
+            None => Found::Others,
+        })
     }
 
     /// The same store, waiting at most `deadline` for the service's lock (30 s by default);
@@ -275,7 +428,7 @@ impl LinuxSecretServiceStore {
     /// # Errors
     /// [`KeyProviderError::Unavailable`] when the Secret Service cannot be reached
     pub fn duplicate_count(&self) -> Result<usize, KeyProviderError> {
-        with_collection(|c| {
+        self.with_collection(|c, _| {
             let items = self.service_items(c)?;
             let generations: BTreeSet<KeyGeneration> = items.iter().map(|(g, _)| *g).collect();
             Ok(items.len() - generations.len())
@@ -328,7 +481,7 @@ impl LinuxSecretServiceStore {
 
 impl GenerationItems for LinuxSecretServiceStore {
     fn inventory(&self) -> Result<Inventory, KeyProviderError> {
-        with_collection(|c| {
+        self.with_collection(|c, _| {
             let items = c
                 .search_items(HashMap::from([(SERVICE_ATTR, self.service.as_str())]))
                 .map_err(|e| unavailable(&e))?;
@@ -352,7 +505,7 @@ impl GenerationItems for LinuxSecretServiceStore {
     }
 
     fn read(&self, generation: KeyGeneration) -> Result<Option<Key>, KeyProviderError> {
-        with_collection(|c| {
+        self.with_collection(|c, _| {
             let items = self.generation_items(c, generation)?;
             if items.len() > 1 {
                 log::warn!(
@@ -370,34 +523,41 @@ impl GenerationItems for LinuxSecretServiceStore {
     /// Called under the service's lock; returns only once the new item is listed by the search
     /// readers use, so the next holder of the lock sees it.
     fn create(&self, generation: KeyGeneration, key: &Key) -> Result<bool, KeyProviderError> {
-        with_collection(|c| {
-            let g = generation.to_string();
-            let created = c
-                .create_item(
-                    &format!("{} key generation {generation}", self.service),
-                    HashMap::from([
-                        (SERVICE_ATTR, self.service.as_str()),
-                        (GENERATION_ATTR, g.as_str()),
-                    ]),
-                    key.as_bytes(),
-                    false,
-                    CONTENT_TYPE,
-                )
-                .map_err(|e| unavailable(&e))?;
-            let mut items = Vec::new();
-            wait_listed(
+        self.with_collection(|c, attempt| {
+            create_or_adopt(
+                attempt,
+                || self.look(c, generation, key),
                 || {
-                    items = self.generation_items(c, generation)?;
-                    Ok(items.iter().any(|i| i.item_path == created.item_path))
+                    let g = generation.to_string();
+                    let created = c
+                        .create_item(
+                            &format!("{} key generation {generation}", self.service),
+                            HashMap::from([
+                                (SERVICE_ATTR, self.service.as_str()),
+                                (GENERATION_ATTR, g.as_str()),
+                            ]),
+                            key.as_bytes(),
+                            false,
+                            CONTENT_TYPE,
+                        )
+                        .map_err(|e| unavailable(&e))?;
+                    let mut items = Vec::new();
+                    wait_listed(
+                        || {
+                            items = self.generation_items(c, generation)?;
+                            Ok(items.iter().any(|i| i.item_path == created.item_path))
+                        },
+                        LISTED_DEADLINE,
+                    )?;
+                    Ok(choose(&items)?.is_some_and(|chosen| chosen.item_path == created.item_path))
                 },
-                LISTED_DEADLINE,
-            )?;
-            Ok(choose(&items)?.is_some_and(|chosen| chosen.item_path == created.item_path))
+            )
         })
     }
 
     fn mark(&self, generation: KeyGeneration) -> Result<(), KeyProviderError> {
-        with_collection(|c| {
+        // looks before it creates, so running it again is safe
+        self.with_collection(|c, _| {
             let g = generation.to_string();
             let attrs = HashMap::from([
                 (SERVICE_ATTR, self.service.as_str()),
@@ -486,6 +646,147 @@ mod tests {
         let r = wait_listed(|| Ok(false), Duration::from_millis(50));
         assert!(matches!(r, Err(KeyProviderError::Unavailable(m)) if m.contains("not listed")));
         assert!(start.elapsed() >= Duration::from_millis(50));
+    }
+
+    const OTHER: KeyProviderError = KeyProviderError::Unavailable("locked");
+
+    #[test]
+    fn the_session_is_made_once_and_kept() {
+        let mut slot = None;
+        let mut connects = 0;
+        for _ in 0..3 {
+            let r: Result<u8, _> = with_retry(
+                &mut slot,
+                || {
+                    connects += 1;
+                    Ok(connects)
+                },
+                |s, a| {
+                    assert_eq!(a, Attempt::First);
+                    Ok(*s)
+                },
+            );
+            assert_eq!(r.unwrap(), 1);
+        }
+        assert_eq!(connects, 1);
+    }
+
+    #[test]
+    fn an_unreachable_service_gets_one_new_connection_then_fails() {
+        let mut slot = Some(0_u8);
+        let (mut connects, mut runs) = (0, Vec::new());
+        let r: Result<(), _> = with_retry(
+            &mut slot,
+            || {
+                connects += 1;
+                Ok(connects)
+            },
+            |s, a| {
+                runs.push((*s, a));
+                Err(KeyProviderError::Unavailable(UNREACHABLE))
+            },
+        );
+        assert!(r.is_err_and(|e| is_unreachable(&e)));
+        // the kept session, then exactly one new one
+        assert_eq!(runs, [(0, Attempt::First), (1, Attempt::Retry)]);
+        assert_eq!(connects, 1);
+        assert!(slot.is_none());
+    }
+
+    #[test]
+    fn other_errors_are_not_retried() {
+        let mut slot = Some(0_u8);
+        let mut runs = 0;
+        let r: Result<(), _> = with_retry(
+            &mut slot,
+            || Ok(1),
+            |_, _| {
+                runs += 1;
+                Err(OTHER)
+            },
+        );
+        assert!(matches!(r, Err(KeyProviderError::Unavailable("locked"))));
+        assert_eq!(runs, 1);
+        assert_eq!(slot, Some(0), "the session is kept");
+    }
+
+    /// A stand-in for the service: the items of one generation as (key byte), and whether the next
+    /// create's answer is lost after the item was made
+    struct Service {
+        items: Vec<u8>,
+        lose_next_answer: bool,
+    }
+
+    fn create_with_retry(service: &mut Service, key: u8) -> Result<bool, KeyProviderError> {
+        let mut slot = Some(());
+        let cell = std::cell::RefCell::new(service);
+        with_retry(
+            &mut slot,
+            || Ok(()),
+            |(), attempt| {
+                create_or_adopt(
+                    attempt,
+                    || {
+                        let s = cell.borrow();
+                        Ok(match s.items.iter().position(|k| *k == key) {
+                            Some(i) => Found::Ours { chosen: i == 0 },
+                            None if s.items.is_empty() => Found::Nothing,
+                            None => Found::Others,
+                        })
+                    },
+                    || {
+                        let mut s = cell.borrow_mut();
+                        s.items.push(key);
+                        if std::mem::take(&mut s.lose_next_answer) {
+                            return Err(KeyProviderError::Unavailable(UNREACHABLE));
+                        }
+                        Ok(s.items[0] == key)
+                    },
+                )
+            },
+        )
+    }
+
+    #[test]
+    fn a_create_whose_answer_was_lost_is_adopted_not_made_twice() {
+        let mut service = Service {
+            items: Vec::new(),
+            lose_next_answer: true,
+        };
+        assert_eq!(create_with_retry(&mut service, 7), Ok(true));
+        assert_eq!(service.items, [7], "exactly one item after the lost answer");
+    }
+
+    #[test]
+    fn a_retried_create_that_finds_another_item_does_not_create() {
+        let mut service = Service {
+            items: vec![9],
+            lose_next_answer: false,
+        };
+        let r = create_or_adopt(
+            Attempt::Retry,
+            || Ok(Found::Others),
+            || {
+                service.items.push(7);
+                Ok(true)
+            },
+        );
+        assert_eq!(r, Ok(false));
+        assert_eq!(service.items, [9]);
+    }
+
+    #[test]
+    fn a_retried_create_that_finds_nothing_creates() {
+        let mut made = 0;
+        let r = create_or_adopt(
+            Attempt::Retry,
+            || Ok(Found::Nothing),
+            || {
+                made += 1;
+                Ok(true)
+            },
+        );
+        assert_eq!((r, made), (Ok(true), 1));
     }
 
     #[test]

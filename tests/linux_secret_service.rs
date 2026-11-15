@@ -679,3 +679,84 @@ fn the_lock_lives_in_a_private_directory_under_the_runtime_dir() {
         .unwrap()
         .contains("lock-file"));
 }
+
+#[test]
+fn the_store_is_send_and_sync() {
+    // a compile-time check: the kept connection must not make the store unusable across threads
+    fn shareable<T: Send + Sync>() {}
+    shareable::<LinuxSecretServiceStore>();
+}
+
+/// The child of `one_store_opens_one_session_for_many_operations`: many operations on one store
+/// (it does nothing unless `ALICE_KEYSTORE_TEST_OPS` names a service)
+#[test]
+fn ops_helper() {
+    let Ok(service) = std::env::var("ALICE_KEYSTORE_TEST_OPS") else {
+        return;
+    };
+    let store = LinuxSecretServiceStore::new(&service);
+    store.current().unwrap();
+    for _ in 0..5 {
+        store.rotate().unwrap();
+    }
+    for g in 1..=6 {
+        store.by_generation(g).unwrap();
+    }
+    assert_eq!(store.current().unwrap().0, 6);
+    assert_eq!(store.duplicate_count().unwrap(), 0);
+    println!("OPS-DONE");
+}
+
+#[test]
+fn one_store_opens_one_session_for_many_operations() {
+    // the child runs under its own private bus (scripts/with_keyring.sh), so that bus's record holds
+    // only the child's calls; before, every operation opened a connection and a session of its own
+    let dir = tempfile_dir();
+    let bus_log = dir.join("bus.log");
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/with_keyring.sh");
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .arg(std::env::current_exe().unwrap())
+        .args(["--exact", "ops_helper", "--nocapture", "--test-threads=1"])
+        // a session of its own, not this test's (and not this test's daemon log)
+        .env_remove("ALICE_KEYRING_SESSION")
+        .env_remove("ALICE_KEYRING_LOG")
+        .env("ALICE_KEYRING_BUS_LOG", &bus_log)
+        .env(
+            "ALICE_KEYSTORE_TEST_OPS",
+            "alice-os-keystore-test.one-session",
+        )
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("OPS-DONE"),
+        "the child failed: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record = std::fs::read_to_string(&bus_log).unwrap();
+    let calls = |member: &str| {
+        record
+            .lines()
+            .filter(|l| l.starts_with("method call") && l.contains(&format!("member={member}")))
+            .count()
+    };
+    let service_calls = record
+        .lines()
+        .filter(|l| {
+            l.starts_with("method call") && l.contains("interface=org.freedesktop.Secret.Service")
+        })
+        .count();
+    let _ = std::fs::remove_dir_all(&dir);
+    // nothing recorded would compare nothing
+    assert!(
+        service_calls > 10,
+        "only {service_calls} Secret Service calls were recorded"
+    );
+    assert_eq!(
+        calls("OpenSession"),
+        1,
+        "one store opened {} sessions for {service_calls} Secret Service calls",
+        calls("OpenSession")
+    );
+}

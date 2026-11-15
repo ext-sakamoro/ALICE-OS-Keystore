@@ -79,6 +79,7 @@ dependencies = [
  "sha2 0.11.1",
  "uniffi",
  "windows-sys",
+ "zbus",
  "zeroize",
 ]
 
