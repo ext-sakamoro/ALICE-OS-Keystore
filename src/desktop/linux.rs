@@ -50,7 +50,8 @@
 //! program that makes a store per request or per thread still opens one connection. Calls of all
 //! those stores take turns on it; a call that has waited [`LinuxSecretServiceStore::lock_deadline`]
 //! for its turn (another call stuck on the bus) is [`KeyProviderError::Unavailable`].
-//! [`LinuxSecretServiceStore::close_shared`] closes it for every store of the service in the process
+//! [`LinuxSecretServiceStore::close_shared`] closes it for every store of the service with the same call
+//! timeout in the process
 //! (the next call opens a new one). A child process made by `fork` does not use or close the
 //! connections it inherits (their socket is the parent's): it opens its own. Before, every call
 //! opened its own connection and session; the churn of connections that came and went every few
@@ -424,8 +425,9 @@ impl LinuxSecretServiceStore {
         self
     }
 
-    /// Close the process's shared connection for this service, for every store of the service in
-    /// the process: the session's key is dropped, and the next call of any of them opens a new one
+    /// Close the process's shared connection for this service and call timeout, for every store of
+    /// the service with that call timeout in the process: the session's key is dropped, and the
+    /// next call of any of them opens a new one
     ///
     /// # Errors
     /// [`KeyProviderError::Unavailable`] when another call holds the connection past
