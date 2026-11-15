@@ -37,9 +37,18 @@ def wasm(logs: list[Path]) -> list[str]:
     return problems
 
 
+def error_of(result: dict, limit: int = 1500) -> str:
+    """the first error message of a Playwright result (its `error`, else its first `errors` entry), cut to `limit`"""
+    err = result.get("error") or next(iter(result.get("errors") or []), None) or {}
+    message = (err.get("message") or err.get("value") or "").strip() or "(no error message in the report)"
+    return message if len(message) <= limit else message[:limit] + " [...]"
+
+
 def playwright(report: Path) -> list[str]:
     data = json.loads(report.read_text(encoding="utf-8"))
     counts = {p: [0, 0] for p in PROJECTS}
+
+    not_passed = []
 
     def walk(suite: dict) -> None:
         for spec in suite.get("specs", []):
@@ -47,12 +56,19 @@ def playwright(report: Path) -> list[str]:
                 project = t.get("projectName", "")
                 for r in t.get("results", []):
                     if project in counts:
-                        counts[project][0 if r.get("status") == "passed" else 1] += 1
+                        ok = r.get("status") == "passed"
+                        counts[project][0 if ok else 1] += 1
+                        if not ok:
+                            not_passed.append((project, spec.get("title", "?"), r))
         for s in suite.get("suites", []):
             walk(s)
 
     for s in data.get("suites", []):
         walk(s)
+    # why each one did not pass, so a failure is explained by the log (the report itself is not kept)
+    for project, title, r in not_passed:
+        print(f"not passed: {project}: {title}: {r.get('status', '?')} (retry {r.get('retry', 0)})")
+        print("  " + error_of(r).replace("\n", "\n  "))
     problems = []
     for project, (passed, failed) in counts.items():
         print(f"{project}: {passed} passed, {failed} not passed")
