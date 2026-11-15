@@ -42,6 +42,7 @@
 //! existed are `UnknownGeneration`, a removed generation is `Irrecoverable`, and a store with
 //! no current key (or whose current key reached its seal limit) is `Unavailable`.
 
+use crate::{FloorError, FloorName};
 use alice_crypto::{AsyncKeyOps, KeyGeneration, KeyOpsError, KeyProviderError};
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
@@ -149,6 +150,31 @@ export function ks_take_seal(db, g, limit) {
     tx.onabort = () => reject(tx.error);
   });
 }
+// One readwrite transaction over meta: reads `floor/<name>`, keeps the lexicographically larger of
+// it and [hi, lo] (a stored value that is not two safe non-negative integers counts as absent),
+// writes it when it changed, and resolves the floor after the call as [hi, lo].
+export function ks_raise_floor(db, key, hi, lo) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("meta", "readwrite");
+    const store = tx.objectStore("meta");
+    let out = null;
+    const request = store.get(key);
+    request.onsuccess = () => {
+      const v = request.result;
+      const ok = Array.isArray(v) && v.length === 2 &&
+        v.every((n) => Number.isSafeInteger(n) && n >= 0);
+      if (ok && (v[0] > hi || (v[0] === hi && v[1] >= lo))) {
+        out = [v[0], v[1]];
+        return;
+      }
+      store.put([hi, lo], key);
+      out = [hi, lo];
+    };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
 export function ks_close(db) { db.close(); }
 export function ks_delete(factory, name) {
   return new Promise((resolve, reject) => {
@@ -179,6 +205,13 @@ extern "C" {
     #[wasm_bindgen(catch)]
     fn ks_take_seal(db: &JsValue, g: KeyGeneration, limit: f64)
         -> Result<js_sys::Promise, JsValue>;
+    #[wasm_bindgen(catch)]
+    fn ks_raise_floor(
+        db: &JsValue,
+        key: &str,
+        hi: f64,
+        lo: f64,
+    ) -> Result<js_sys::Promise, JsValue>;
     fn ks_close(db: &JsValue);
     #[wasm_bindgen(catch)]
     fn ks_delete(factory: &JsValue, name: &str) -> Result<js_sys::Promise, JsValue>;
@@ -286,6 +319,21 @@ fn js_integer(v: f64) -> Option<u64> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let n = v as u64;
     (v.fract() == 0.0 && (0.0..9_007_199_254_740_992.0).contains(&v)).then_some(n)
+}
+
+/// The `meta` key of floor `name`.
+fn floor_key(name: &FloorName) -> String {
+    format!("floor/{name}")
+}
+
+/// A stored floor `[hi, lo]` (two integers below 2^53), `None` for anything else.
+fn floor_pair(v: &JsValue) -> Option<(u64, u64)> {
+    let a = v.dyn_ref::<Array>()?;
+    if a.length() != 2 {
+        return None;
+    }
+    let half = |i| a.get(i).as_f64().and_then(js_integer);
+    Some((half(0)?, half(1)?))
 }
 
 /// A generation read back from `IndexedDB`.
@@ -575,6 +623,55 @@ impl WebCryptoStore {
             }
             _ => false,
         }
+    }
+
+    /// The floor of `name` (see [`crate::floor`]), `None` when it was never raised.
+    ///
+    /// The floor lives in the object store `meta` under `floor/<name>` as `[hi, lo]`. A stored
+    /// value that is not two integers below 2^53 counts as absent. Clearing the site's data
+    /// removes it (it then reads `None`), and so may eviction without persistent storage
+    /// ([`Self::persisted`]); the page's own scripts can write it. It is not protection against
+    /// anything that runs in or controls this origin.
+    ///
+    /// # Errors
+    ///
+    /// [`FloorError::Unavailable`] when `IndexedDB` fails.
+    pub async fn read_floor(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+        let value = JsFuture::from(
+            ks_get(&self.db, "meta", &floor_key(name).into())
+                .map_err(|_| FloorError::Unavailable("IndexedDB read failed"))?,
+        )
+        .await
+        .map_err(|_| FloorError::Unavailable("IndexedDB read failed"))?;
+        Ok(floor_pair(&value))
+    }
+
+    /// Raise the floor of `name` to at least `to` and return the floor after the call (the
+    /// larger of the stored value and `to`), in one `IndexedDB` readwrite transaction, so two
+    /// tabs raising at once keep the larger value. See [`Self::read_floor`] for what it gives.
+    ///
+    /// # Errors
+    ///
+    /// [`FloorError::OutOfRange`] when either half of `to` is 2^53 or more (a JavaScript number
+    /// is exact only below), with nothing written; [`FloorError::Unavailable`] when
+    /// `IndexedDB` fails.
+    pub async fn raise_floor(
+        &self,
+        name: &FloorName,
+        to: (u64, u64),
+    ) -> Result<(u64, u64), FloorError> {
+        if to.0 >= JS_EXACT || to.1 >= JS_EXACT {
+            return Err(FloorError::OutOfRange);
+        }
+        let after = JsFuture::from(
+            ks_raise_floor(&self.db, &floor_key(name), js_limit(to.0), js_limit(to.1))
+                .map_err(|_| FloorError::Unavailable("IndexedDB write failed"))?,
+        )
+        .await
+        .map_err(|_| FloorError::Unavailable("IndexedDB write failed"))?;
+        floor_pair(&after).ok_or(FloorError::Unavailable(
+            "IndexedDB returned an unexpected floor",
+        ))
     }
 
     /// Closes the database connection (the keys stay in `IndexedDB`). Dropping the store does the

@@ -85,6 +85,34 @@ let secret = alice_os_keystore::prompt::read_secret("Passphrase: ")?; // echo is
 
 `fs::exchange(a, b)` swaps two existing paths in one step on Linux and Apple platforms, so a process stopped halfway leaves either the old or the new directory, never a mix. Any two entries swap (a directory and a file too), a symbolic link is swapped itself and not followed, the same path twice succeeds and changes nothing, and paths on different file systems are refused (`EXDEV`) without changing anything. On other platforms it returns `Unsupported` and changes nothing. Sync the parent directory afterwards if a crash must not undo the swap.
 
+### Floors that only go up
+
+`MonotonicFloor` keeps a named pair `(u64, u64)` that is raised, never lowered: `raise(name, to)` keeps the lexicographically larger of the stored pair and `to` and returns it (a lower `to` changes nothing and is not an error), `read(name)` returns it or `None`. An application keeps state in its data directory and stores, outside that directory, the lowest version it accepts back, so that writing the data directory alone does not put back an older copy that is otherwise valid. A single counter is `(n, 0)`. `FloorName` is 1 to 64 bytes of `a-z`, `0-9` and `-`.
+
+```rust
+use alice_os_keystore::{FloorName, MemoryFloor, MonotonicFloor};
+
+let floors = MemoryFloor::new();
+let name = FloorName::new("relay-a")?;
+assert_eq!(floors.raise(&name, (3, 7))?, (3, 7));
+assert_eq!(floors.raise(&name, (2, 9))?, (3, 7));   // lower: ignored
+assert_eq!(floors.read(&name)?, Some((3, 7)));
+# Ok::<(), alice_os_keystore::FloorError>(())
+```
+
+The desktop stores keep one create-only item per raise and remove the older items of that name afterwards (a read takes the largest; item names that do not parse are ignored). What a floor gives depends on who can remove it:
+
+| store | where the floor lives | who can remove it (the name then reads `None`) |
+|---|---|---|
+| `MemoryFloor` | process memory | nothing persists (tests, reference) |
+| `MacosKeychainStore` | login keychain items, account `floor-<name>-<hi>-<lo>` (20 digits each) | any process of the same macOS user (`SecItemDelete`), and the user in Keychain Access |
+| `LinuxSecretServiceStore` | Secret Service items with `keystore-floor` / `keystore-floor-value`; a raise holds the service's lock | any process of the same user on the session bus while the keyring is unlocked |
+| `WindowsDpapiStore` | empty files `floor-<name>-<hi>-<lo>` in `%LOCALAPPDATA%\<service>` | any process of the same Windows user (the profile's ACL) |
+| `web::WebCryptoStore` (`read_floor` / `raise_floor`, async) | IndexedDB `meta`, key `floor/<name>`, `[hi, lo]`, raised in one readwrite transaction; each half must be below 2^53 (`OutOfRange`) | scripts of the same origin, clearing the site's data, eviction without persistent storage |
+| iOS / Android, `ffi::ForeignMonotonicFloor` (feature `uniffi`) | the platform's Keychain / Keystore, implemented by the app (this crate ships no Swift or Kotlin implementation) | not something that can only write the app's data directory |
+
+So on desktop and in the browser a floor raises the bar (writing the data directory is not enough), but it is not protection against a process running as the same user, which can delete every floor item.
+
 ### Unsafe code
 
 `unsafe` code is allowed only in `src/sys/`, the module that makes the operating system calls this crate makes itself (today the Windows console mode and DPAPI). The macOS Keychain is reached through the `security-framework` crate, with no `unsafe` here. Every `unsafe` block there carries a `SAFETY:` note. The rest of the crate denies `unsafe` code, and `scripts/unsafe_scope_check.py` (run in CI and by `scripts/preflight.sh`) fails on any `unsafe` outside `src/sys/`. On unix the terminal is controlled through `rustix`'s safe API.
@@ -146,6 +174,7 @@ Tests: `tests/web_webcrypto_store.rs` runs in headless Chrome and Firefox (`wasm
 - Windows DPAPI store: run only on the CI Windows runner; that a file does not open for another Windows user is DPAPI's documented behaviour and not tested here (CI has one user)
 - macOS Keychain: the retry in `current` when an item disappears between listing and reading is not exercised by a test (it needs another process deleting at that moment), and that the buffer returned by the Security framework is zeroed is not observable from a test
 - Android Keystore
+- Floors: the Linux and Windows floor tests run only on the CI runners; the browser floor treats a stored value that is not two integers below 2^53 as absent, which no test writes; no Swift or Kotlin `ForeignMonotonicFloor` ships here (the app supplies one)
 - Reading a secret on a Windows console: the code is built and linted (clippy, pedantic) on Windows, refusing a non-console input is tested there, and the UTF-16 to UTF-8 conversion is unit-tested on every OS, but typing at a console is not tested (CI has no console); on unix the reader is tested through a pseudo-terminal
 
 ## Tests

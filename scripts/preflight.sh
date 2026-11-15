@@ -943,7 +943,7 @@ step "public-text.yml / public-text: Tests of scripts/public_text.sh (no network
 ( python scripts/test_public_text.py )
 )
 
-if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
+if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "src/floor.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
 step "web.yml / browser: Clippy (wasm32, web-page, all targets)"
 (
   gh_step web.yml.browser
@@ -955,7 +955,7 @@ else
   echo 'PREFLIGHT-SKIP: web.yml / browser: Clippy (wasm32, web-page, all targets): the change touches none of its push paths' >&2
 fi
 
-if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
+if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "src/floor.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
 step "web.yml / browser: wasm-bindgen tests (headless Chrome and Firefox) and their count"
 (
   gh_step web.yml.browser
@@ -980,8 +980,8 @@ step "ci.yml / test: Test (default features)"
   gh_step ci.yml.test
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
-  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=21"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=18,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=23"; fi
+  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,floor_oracle=9,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test
 )
 )
 
@@ -990,8 +990,8 @@ step "ci.yml / test: Test (all features)"
   gh_step ci.yml.test
 (
   export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"
-  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=16"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=13,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=18"; fi
-  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,foreign_oracle=8,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
+  if [ "${RUNNER_OS:-}" = Windows ]; then read_min=1; swap_min=1; os_store=",windows_dpapi=21"; elif [ "$(uname -s)" = Linux ]; then read_min=12; swap_min=6; os_store=",linux_secret_service=18,linux_headless=1"; else read_min=12; swap_min=5; os_store=",macos_keychain=23"; fi
+  scripts/with_keyring.sh scripts/run_tests.sh vault_oracle=11,floor_oracle=9,foreign_oracle=11,"read_secret=$read_min,exchange=$swap_min$os_store" -- cargo test --all-features
 )
 )
 

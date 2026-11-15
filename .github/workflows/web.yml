@@ -12,6 +12,7 @@ on:
       - 'src/web.rs'
       - 'src/web_page.rs'
       - 'src/lib.rs'
+      - 'src/floor.rs'
       - 'tests/web_webcrypto_store.rs'
       - 'tests/web/**'
       - 'scripts/web_test_count.py'

@@ -28,11 +28,17 @@
 use core_foundation::data::CFData;
 use security_framework::base::Error as SecError;
 use security_framework::item::{ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Limit};
-use security_framework::passwords::get_generic_password;
+use security_framework::passwords::{delete_generic_password, get_generic_password};
 use zeroize::Zeroize;
 
-use super::{by_generation_of, current_of, generation_of, rotate_of, GenerationItems, Inventory};
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+use super::{
+    by_generation_of, current_of, floor_raise_of, floor_read_of, generation_of, rotate_of,
+    FloorItems, GenerationItems, Inventory,
+};
+use crate::floor::{item_name, parse_item};
+use crate::{
+    FloorError, FloorName, Key, KeyGeneration, KeyProvider, KeyProviderError, MonotonicFloor,
+};
 
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const ERR_SEC_DUPLICATE_ITEM: i32 = -25299;
@@ -98,6 +104,24 @@ impl MacosKeychainStore {
         rotate_of(self)
     }
 
+    /// The accounts of this service's items (none when there is no item)
+    fn accounts_unlocked(&self) -> Result<Vec<String>, SecError> {
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(&self.service)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search();
+        match found {
+            Ok(items) => Ok(items
+                .iter()
+                .filter_map(|item| item.simplify_dict().and_then(|d| d.get("acct").cloned()))
+                .collect()),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Add a generic password item; `false` when the account already exists
     fn add(&self, account: &str, data: &[u8]) -> Result<bool, KeyProviderError> {
         let mut item = ItemAddOptions::new(ItemAddValue::Data {
@@ -138,22 +162,9 @@ impl GenerationItems for MacosKeychainStore {
 
 impl MacosKeychainStore {
     fn inventory_unlocked(&self) -> Result<Inventory, KeyProviderError> {
-        let found = ItemSearchOptions::new()
-            .class(ItemClass::generic_password())
-            .service(&self.service)
-            .load_attributes(true)
-            .limit(Limit::All)
-            .search();
-        let items = match found {
-            Ok(items) => items,
-            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(Inventory::default()),
-            Err(e) => return Err(unavailable(e)),
-        };
+        let accounts = self.accounts_unlocked().map_err(unavailable)?;
         let mut inv = Inventory::default();
-        for item in &items {
-            let Some(account) = item.simplify_dict().and_then(|d| d.get("acct").cloned()) else {
-                continue;
-            };
+        for account in accounts {
             if let Some(g) = generation_of(&account, KEY_PREFIX, "") {
                 inv.keys.insert(g);
             } else if let Some(g) = generation_of(&account, MARKER_PREFIX, "") {
@@ -186,5 +197,54 @@ impl KeyProvider for MacosKeychainStore {
 
     fn by_generation(&self, generation: KeyGeneration) -> Result<Key, KeyProviderError> {
         by_generation_of(self, generation)
+    }
+}
+
+fn floor_unavailable(e: SecError) -> FloorError {
+    match unavailable(e) {
+        KeyProviderError::Unavailable(why) => FloorError::Unavailable(why),
+        _ => FloorError::Unavailable("the keychain refused the request"),
+    }
+}
+
+impl FloorItems for MacosKeychainStore {
+    fn floor_values(&self, name: &FloorName) -> Result<Vec<(u64, u64)>, FloorError> {
+        let accounts =
+            keychain_serialized(|| self.accounts_unlocked()).map_err(floor_unavailable)?;
+        Ok(accounts
+            .iter()
+            .filter_map(|a| parse_item(a, name))
+            .collect())
+    }
+
+    fn create_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        // the item holds no secret; its account is the record
+        match self.add(&item_name(name, v), b"floor") {
+            Ok(_) => Ok(()),
+            Err(KeyProviderError::Unavailable(why)) => Err(FloorError::Unavailable(why)),
+            Err(_) => Err(FloorError::Unavailable("the keychain refused the request")),
+        }
+    }
+
+    fn remove_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        keychain_serialized(
+            || match delete_generic_password(&self.service, &item_name(name, v)) {
+                Ok(()) => Ok(()),
+                Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+                Err(e) => Err(floor_unavailable(e)),
+            },
+        )
+    }
+}
+
+/// Floors as create-only items of the login keychain (see the floor model in `desktop`): any
+/// process of the same macOS user can delete them
+impl MonotonicFloor for MacosKeychainStore {
+    fn read(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+        floor_read_of(self, name)
+    }
+
+    fn raise(&self, name: &FloorName, to: (u64, u64)) -> Result<(u64, u64), FloorError> {
+        floor_raise_of(self, name, to)
     }
 }

@@ -22,8 +22,11 @@
 
 use std::collections::HashMap;
 
+mod floor_laws;
+
 use alice_crypto::{KeyProvider, KeyProviderError};
 use alice_os_keystore::desktop::LinuxSecretServiceStore;
+use alice_os_keystore::MonotonicFloor;
 use secret_service::blocking::SecretService;
 use secret_service::EncryptionType;
 
@@ -795,4 +798,133 @@ fn the_stores_of_a_service_share_one_session() {
         "the stores of one service opened {} sessions for {service_calls} Secret Service calls",
         calls("OpenSession")
     );
+}
+
+// ---- floors (the laws in floor_laws; items with `keystore-floor` = the name and
+// `keystore-floor-value` = `<hi, 20 digits>-<lo, 20 digits>`) ----
+
+const V5: &str = "00000000000000000005-00000000000000000000";
+const V7: &str = "00000000000000000007-00000000000000000000";
+
+impl Service {
+    /// (floor name, floor value) of every floor item of this service, sorted
+    fn floors(&self) -> Vec<(String, String)> {
+        let ss = helper_connection().expect("the Secret Service is reachable");
+        let c = ss.get_default_collection().unwrap();
+        let mut out: Vec<_> = c
+            .search_items(HashMap::from([("keystore-service", self.0.as_str())]))
+            .unwrap()
+            .iter()
+            .filter_map(|i| {
+                let a = i.get_attributes().unwrap();
+                Some((
+                    a.get("keystore-floor")?.clone(),
+                    a.get("keystore-floor-value")?.clone(),
+                ))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Make a floor item behind the store's back
+    fn put_floor(&self, name: &str, value: &str) {
+        let ss = helper_connection().expect("the Secret Service is reachable");
+        let c = ss.get_default_collection().unwrap();
+        c.create_item(
+            "test floor",
+            HashMap::from([
+                ("keystore-service", self.0.as_str()),
+                ("keystore-floor", name),
+                ("keystore-floor-value", value),
+            ]),
+            b"",
+            false,
+            "application/octet-stream",
+        )
+        .unwrap();
+    }
+
+    fn remove_floors(&self) {
+        let ss = helper_connection().expect("the Secret Service is reachable");
+        let c = ss.get_default_collection().unwrap();
+        for i in c
+            .search_items(HashMap::from([("keystore-service", self.0.as_str())]))
+            .unwrap()
+        {
+            if i.get_attributes().unwrap().contains_key("keystore-floor") {
+                i.delete().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn floor_laws_hold_in_the_secret_service() {
+    let s = Service::new("floor-laws");
+    let store = LinuxSecretServiceStore::new(&s.0);
+    floor_laws::raise_then_read(&store);
+    floor_laws::lower_raise_is_ignored(&store);
+    floor_laws::names_are_isolated(&store);
+    floor_laws::one_counter_as_n_0(&store);
+    floor_laws::full_range(&store);
+    // the floors left no key items and no markers
+    assert!(s.items().is_empty());
+    assert!(s.markers().is_empty());
+}
+
+#[test]
+fn a_floor_raise_leaves_one_item_holding_the_value() {
+    let s = Service::new("floor-item");
+    let store = LinuxSecretServiceStore::new(&s.0);
+    let a = floor_laws::name("a");
+    store.raise(&a, (5, 0)).unwrap();
+    assert_eq!(s.floors(), [("a".to_string(), V5.to_string())]);
+    store.raise(&a, (7, 0)).unwrap();
+    assert_eq!(s.floors(), [("a".to_string(), V7.to_string())]);
+    store.raise(&a, (6, 0)).unwrap();
+    assert_eq!(s.floors(), [("a".to_string(), V7.to_string())]);
+}
+
+#[test]
+fn an_older_floor_item_left_beside_a_newer_one_reads_the_newer() {
+    let s = Service::new("floor-crash");
+    s.put_floor("a", V7);
+    s.put_floor("a", V5);
+    let store = LinuxSecretServiceStore::new(&s.0);
+    let a = floor_laws::name("a");
+    assert_eq!(store.read(&a).unwrap(), Some((7, 0)));
+    assert_eq!(store.raise(&a, (6, 0)).unwrap(), (7, 0));
+    assert_eq!(s.floors(), [("a".to_string(), V7.to_string())]);
+}
+
+#[test]
+fn malformed_floor_items_are_ignored() {
+    let s = Service::new("floor-malformed");
+    for value in [
+        "5-0",
+        "0000000000000000000x-00000000000000000000",
+        "99999999999999999999-00000000000000000000",
+        "00000000000000000009_00000000000000000000",
+        "",
+    ] {
+        s.put_floor("a", value);
+    }
+    s.put_floor("b", "00000000000000000009-00000000000000000000");
+    let store = LinuxSecretServiceStore::new(&s.0);
+    let a = floor_laws::name("a");
+    assert_eq!(store.read(&a).unwrap(), None);
+    assert_eq!(store.raise(&a, (1, 0)).unwrap(), (1, 0));
+    assert_eq!(store.read(&a).unwrap(), Some((1, 0)));
+}
+
+#[test]
+fn deleting_every_floor_item_of_a_name_reads_none_again() {
+    let s = Service::new("floor-deleted");
+    let store = LinuxSecretServiceStore::new(&s.0);
+    let a = floor_laws::name("a");
+    store.raise(&a, (7, 0)).unwrap();
+    s.remove_floors();
+    assert_eq!(store.read(&a).unwrap(), None);
+    assert_eq!(store.raise(&a, (1, 0)).unwrap(), (1, 0));
 }

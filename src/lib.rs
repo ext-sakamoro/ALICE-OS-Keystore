@@ -36,6 +36,12 @@
 //! the operating system or from a foreign store can name paths or other detail and is not
 //! passed on.
 //!
+//! [`MonotonicFloor`] keeps named `(u64, u64)` values that are raised and never lowered
+//! (see [`floor`] for what each store's floor protects against and what it does not):
+//! [`MemoryFloor`], the desktop stores, `web::WebCryptoStore::raise_floor`, and, with the
+//! `uniffi` feature, a floor implemented by the app on iOS / Android
+//! (`ffi::ForeignMonotonicFloor`).
+//!
 //! [`prompt::read_secret`] reads a secret (a passphrase) from a terminal without
 //! echoing it, for applications whose keys are derived from what a person types.
 //!
@@ -54,10 +60,12 @@ use std::sync::Mutex;
 
 pub use alice_crypto::{AsyncKeyOps, KeyOps, KeyOpsError};
 pub use alice_crypto::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+pub use floor::{FloorError, FloorName, MemoryFloor, MonotonicFloor, FLOOR_NAME_MAX};
 
 pub mod desktop;
 #[cfg(feature = "uniffi")]
 pub mod ffi;
+pub mod floor;
 pub mod fs;
 #[cfg(any(unix, windows))]
 pub mod prompt;

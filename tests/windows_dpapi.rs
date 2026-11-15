@@ -16,8 +16,11 @@
 
 use std::path::{Path, PathBuf};
 
+mod floor_laws;
+
 use alice_crypto::{KeyProvider, KeyProviderError};
 use alice_os_keystore::desktop::WindowsDpapiStore;
+use alice_os_keystore::MonotonicFloor;
 
 /// A directory no other test uses; removed on drop
 struct Dir(PathBuf);
@@ -318,4 +321,82 @@ fn removing_both_the_newest_key_and_its_marker_frees_the_number() {
     std::fs::remove_file(d.file("issued-2")).unwrap();
     assert_eq!(s.current().unwrap().0, 1);
     assert_eq!(s.rotate().unwrap(), 2);
+}
+
+// ---- floors (the laws in floor_laws; empty files `floor-<name>-<hi, 20 digits>-<lo, 20 digits>`) ----
+
+const F5: &str = "floor-a-00000000000000000005-00000000000000000000";
+const F7: &str = "floor-a-00000000000000000007-00000000000000000000";
+
+#[test]
+fn floor_laws_hold_in_the_directory() {
+    let d = Dir::new("floor-laws");
+    let s = store(&d);
+    floor_laws::raise_then_read(&s);
+    floor_laws::lower_raise_is_ignored(&s);
+    floor_laws::names_are_isolated(&s);
+    floor_laws::one_counter_as_n_0(&s);
+    floor_laws::full_range(&s);
+    assert!(d.files().iter().all(|f| f.starts_with("floor-")));
+}
+
+#[test]
+fn a_floor_raise_leaves_one_empty_file_named_by_the_value() {
+    let d = Dir::new("floor-item");
+    let s = store(&d);
+    let a = floor_laws::name("a");
+    s.raise(&a, (5, 0)).unwrap();
+    assert_eq!(d.files(), [F5]);
+    s.raise(&a, (7, 0)).unwrap();
+    assert_eq!(d.files(), [F7]);
+    s.raise(&a, (6, 0)).unwrap();
+    assert_eq!(d.files(), [F7]);
+    assert!(bytes(&d.file(F7)).is_empty());
+}
+
+#[test]
+fn an_older_floor_item_left_beside_a_newer_one_reads_the_newer() {
+    let d = Dir::new("floor-crash");
+    std::fs::create_dir_all(&d.0).unwrap();
+    std::fs::write(d.file(F7), b"").unwrap();
+    std::fs::write(d.file(F5), b"").unwrap();
+    let s = store(&d);
+    let a = floor_laws::name("a");
+    assert_eq!(s.read(&a).unwrap(), Some((7, 0)));
+    assert_eq!(s.raise(&a, (6, 0)).unwrap(), (7, 0));
+    assert_eq!(d.files(), [F7]);
+}
+
+#[test]
+fn malformed_floor_items_are_ignored() {
+    let d = Dir::new("floor-malformed");
+    std::fs::create_dir_all(&d.0).unwrap();
+    for f in [
+        "floor-a-5-0",
+        "floor-a-0000000000000000000x-00000000000000000000",
+        "floor-a-99999999999999999999-00000000000000000000",
+        "floor-a00000000000000000009-00000000000000000000",
+        "floor-b-00000000000000000009-00000000000000000000",
+        "floor-a-00000000000000000009-00000000000000000000.tmp",
+    ] {
+        std::fs::write(d.file(f), b"").unwrap();
+    }
+    let s = store(&d);
+    let a = floor_laws::name("a");
+    assert_eq!(s.read(&a).unwrap(), None);
+    assert_eq!(s.raise(&a, (1, 0)).unwrap(), (1, 0));
+    assert_eq!(s.read(&a).unwrap(), Some((1, 0)));
+}
+
+#[test]
+fn deleting_every_floor_item_of_a_name_reads_none_again() {
+    let d = Dir::new("floor-deleted");
+    let s = store(&d);
+    let a = floor_laws::name("a");
+    s.raise(&a, (7, 0)).unwrap();
+    for f in d.files() {
+        std::fs::remove_file(d.file(&f)).unwrap();
+    }
+    assert_eq!(s.read(&a).unwrap(), None);
+    assert_eq!(s.raise(&a, (1, 0)).unwrap(), (1, 0));
 }

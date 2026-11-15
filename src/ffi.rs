@@ -5,8 +5,15 @@
 //! what comes back (exactly 32 bytes, a generation of at least 1) and maps errors by
 //! kind. The foreign reason text is not passed on: [`KeyProviderError`] carries fixed
 //! reasons, and a foreign message can name paths or other detail.
+//!
+//! A floor kept in the platform's key store (the iOS / Android Keychain or Keystore, outside
+//! the app's data directory) is handed in the same way: the foreign side implements
+//! [`ForeignMonotonicFloor`] and [`ForeignFloorAdapter`] makes it a [`MonotonicFloor`]. This
+//! crate ships no Swift or Kotlin implementation of it; the app supplies one.
 
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+use crate::{
+    FloorError, FloorName, Key, KeyGeneration, KeyProvider, KeyProviderError, MonotonicFloor,
+};
 
 /// A generation and its raw key bytes, as the foreign side returns them
 #[derive(uniffi::Record)]
@@ -125,5 +132,96 @@ impl KeyProvider for ForeignVaultAdapter {
             }
         })?;
         to_key(bytes)
+    }
+}
+
+/// A floor value as the foreign side passes it: `(hi, lo)`, compared lexicographically
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FloorValue {
+    pub hi: u64,
+    pub lo: u64,
+}
+
+/// Errors a foreign floor store reports
+#[derive(Debug, uniffi::Error)]
+pub enum ForeignFloorError {
+    /// Cannot read or write the floor now (locked, access refused); a later call may succeed
+    Unavailable { reason: String },
+}
+
+impl std::fmt::Display for ForeignFloorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable { reason } => write!(f, "floor store unavailable: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ForeignFloorError {}
+
+// as for ForeignVaultError: an unknown foreign error is Unavailable, never an abort
+impl From<uniffi::UnexpectedUniFFICallbackError> for ForeignFloorError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Unavailable {
+            reason: "the foreign floor store threw an error of an unknown type".to_string(),
+        }
+    }
+}
+
+/// Named floors as the foreign side implements them (the platform's key store)
+///
+/// `raise_floor` keeps the larger of the stored value and `to` (lexicographic on `(hi, lo)`)
+/// and returns the stored value after the call; a lower `to` changes nothing.
+#[uniffi::export(callback_interface)]
+pub trait ForeignMonotonicFloor: Send + Sync {
+    /// The floor of `name`, `None` when it was never raised
+    ///
+    /// # Errors
+    /// [`ForeignFloorError::Unavailable`]
+    fn read_floor(&self, name: String) -> Result<Option<FloorValue>, ForeignFloorError>;
+    /// Raise the floor of `name` to at least `to` and return the floor after the call
+    ///
+    /// # Errors
+    /// [`ForeignFloorError::Unavailable`]
+    fn raise_floor(&self, name: String, to: FloorValue) -> Result<FloorValue, ForeignFloorError>;
+}
+
+/// A [`ForeignMonotonicFloor`] used as a [`MonotonicFloor`]
+///
+/// It checks what comes back: a raise that reports a floor below the value asked for broke
+/// the contract and is [`FloorError::Unavailable`] (the floor was not raised as far as asked).
+pub struct ForeignFloorAdapter {
+    inner: Box<dyn ForeignMonotonicFloor>,
+}
+
+impl ForeignFloorAdapter {
+    #[must_use]
+    pub fn new(inner: Box<dyn ForeignMonotonicFloor>) -> Self {
+        Self { inner }
+    }
+}
+
+const FLOOR_FOREIGN_UNAVAILABLE: &str = "the foreign floor store cannot be used now";
+
+impl MonotonicFloor for ForeignFloorAdapter {
+    fn read(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+        self.inner
+            .read_floor(name.as_str().to_owned())
+            .map(|v| v.map(|v| (v.hi, v.lo)))
+            .map_err(|_| FloorError::Unavailable(FLOOR_FOREIGN_UNAVAILABLE))
+    }
+
+    fn raise(&self, name: &FloorName, to: (u64, u64)) -> Result<(u64, u64), FloorError> {
+        let after = self
+            .inner
+            .raise_floor(name.as_str().to_owned(), FloorValue { hi: to.0, lo: to.1 })
+            .map_err(|_| FloorError::Unavailable(FLOOR_FOREIGN_UNAVAILABLE))?;
+        let after = (after.hi, after.lo);
+        if after < to {
+            return Err(FloorError::Unavailable(
+                "the foreign floor store reported a floor below the value asked for",
+            ));
+        }
+        Ok(after)
     }
 }

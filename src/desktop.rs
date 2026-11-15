@@ -21,9 +21,30 @@
 //! Limit: the markers live in the same store as the keys. A program that removes both the
 //! newest key item and its marker erases the record, and that number is issued again.
 //!
+//! # Floors
+//!
+//! Each store also implements [`crate::MonotonicFloor`] on the same model: a raise creates one
+//! item for the new value (`floor-<name>-<hi>-<lo>`, each number as 20 decimal digits; on Linux
+//! the attributes `keystore-floor` = the name and `keystore-floor-value` = `<hi>-<lo>`), never
+//! rewritten, then removes the older items of that name (best effort, after the create); a read
+//! takes the largest value among the items of that name, and items whose name or value does
+//! not parse are ignored. The floor value is not secret and is not sealed.
+//!
+//! | store | floor items | who can remove them (so lower the floor to "never raised") |
+//! |---|---|---|
+//! | `MacosKeychainStore` | generic password items in the login keychain, service = the store's, account `floor-<name>-<hi>-<lo>` | any process running as the same macOS user, through the Security framework (`SecItemDelete`), and the user in Keychain Access |
+//! | `WindowsDpapiStore` | empty files `floor-<name>-<hi>-<lo>` in the store's directory (`%LOCALAPPDATA%\<service>`) | any process running as the same Windows user (the directory has the user profile's ACL) |
+//! | `LinuxSecretServiceStore` | Secret Service items (`keystore-service`, `keystore-floor`, `keystore-floor-value`) in the default collection | any process of the same user that reaches the session bus while the keyring is unlocked |
+//!
+//! So on desktop a floor means that writing the application's data directory is not enough to
+//! roll its state back; it is not protection against a process of the same user, which can
+//! delete every floor item (the name then reads `None`). On iOS / Android the floor belongs in
+//! the platform's key store, reached through `crate::ffi::ForeignMonotonicFloor` (feature
+//! `uniffi`).
+//!
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-use crate::{Key, KeyGeneration, KeyProviderError};
+use crate::{FloorError, FloorName, Key, KeyGeneration, KeyProviderError};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -175,4 +196,44 @@ fn by_generation_of<S: GenerationItems>(
     } else {
         Err(KeyProviderError::UnknownGeneration(generation))
     }
+}
+
+/// One operating system store holding create-only floor items
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+trait FloorItems {
+    /// The values of the items of floor `name` present (items that do not parse left out)
+    fn floor_values(&self, name: &FloorName) -> Result<Vec<(u64, u64)>, FloorError>;
+    /// Create the item of value `v` of floor `name` (an existing item of that value is success)
+    fn create_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError>;
+    /// Remove the item of value `v` of floor `name` (an absent item is success)
+    fn remove_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError>;
+}
+
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn floor_read_of<S: FloorItems>(s: &S, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+    Ok(s.floor_values(name)?.into_iter().max())
+}
+
+/// Raise: create the item of `to` unless a value at least as high is stored, then remove the
+/// items below the result (best effort: a leftover only costs an item, the read takes the max)
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn floor_raise_of<S: FloorItems>(
+    s: &S,
+    name: &FloorName,
+    to: (u64, u64),
+) -> Result<(u64, u64), FloorError> {
+    let present = s.floor_values(name)?;
+    let floor = match present.iter().copied().max() {
+        Some(stored) if stored >= to => stored,
+        _ => {
+            s.create_floor(name, to)?;
+            to
+        }
+    };
+    for v in present {
+        if v < floor {
+            let _ = s.remove_floor(name, v);
+        }
+    }
+    Ok(floor)
 }

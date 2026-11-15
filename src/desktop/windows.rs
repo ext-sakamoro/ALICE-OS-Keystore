@@ -22,9 +22,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeroize::Zeroize;
 
-use super::{by_generation_of, current_of, generation_of, rotate_of, GenerationItems, Inventory};
+use super::{
+    by_generation_of, current_of, floor_raise_of, floor_read_of, generation_of, rotate_of,
+    FloorItems, GenerationItems, Inventory,
+};
+use crate::floor::{item_name, parse_item};
 use crate::sys::dpapi;
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+use crate::{
+    FloorError, FloorName, Key, KeyGeneration, KeyProvider, KeyProviderError, MonotonicFloor,
+};
 
 const SUFFIX: &str = ".dpapi";
 const MARKER_PREFIX: &str = "issued-";
@@ -207,6 +213,62 @@ impl KeyProvider for WindowsDpapiStore {
 
     fn by_generation(&self, generation: KeyGeneration) -> Result<Key, KeyProviderError> {
         by_generation_of(self, generation)
+    }
+}
+
+impl FloorItems for WindowsDpapiStore {
+    fn floor_values(&self, name: &FloorName) -> Result<Vec<(u64, u64)>, FloorError> {
+        let entries = match std::fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(_) => return Err(FloorError::Unavailable("the key directory cannot be read")),
+        };
+        let mut out = Vec::new();
+        for entry in entries {
+            let entry =
+                entry.map_err(|_| FloorError::Unavailable("the key directory cannot be read"))?;
+            if let Some(v) = entry.file_name().to_str().and_then(|n| parse_item(n, name)) {
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
+
+    fn create_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|_| FloorError::Unavailable("the key directory cannot be created"))?;
+        // an empty file: the value is its name, created once (an existing one is the same value)
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.dir.join(item_name(name, v)))
+        {
+            Ok(f) => f
+                .sync_all()
+                .map_err(|_| FloorError::Unavailable("the floor file cannot be written")),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(_) => Err(FloorError::Unavailable("the floor file cannot be written")),
+        }
+    }
+
+    fn remove_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        match std::fs::remove_file(self.dir.join(item_name(name, v))) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(FloorError::Unavailable("the floor file cannot be removed")),
+        }
+    }
+}
+
+/// Floors as empty create-only files in the store's directory (see the floor model in
+/// `desktop`): any process of the same Windows user can delete them
+impl MonotonicFloor for WindowsDpapiStore {
+    fn read(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+        floor_read_of(self, name)
+    }
+
+    fn raise(&self, name: &FloorName, to: (u64, u64)) -> Result<(u64, u64), FloorError> {
+        floor_raise_of(self, name, to)
     }
 }
 

@@ -518,3 +518,106 @@ async fn concurrent_seals_never_exceed_the_limit() {
     b.close();
     a.delete_database().await.expect("cleanup");
 }
+
+// ---- floors: `meta` key `floor/<name>` holding [hi, lo], raised in one readwrite transaction.
+// The laws are those of `floor_laws` (written out here because the browser store is async), and
+// the browser stores JavaScript numbers: values from 2^53 on are refused (`OutOfRange`).
+
+use alice_os_keystore::{FloorError, FloorName};
+
+fn floor_name(s: &str) -> FloorName {
+    FloorName::new(s).unwrap()
+}
+
+/// A fresh database of its own (a leftover of an earlier run removed first)
+async fn fresh(name: &str) -> WebCryptoStore {
+    WebCryptoStore::open(&db(name))
+        .await
+        .expect("open")
+        .delete_database()
+        .await
+        .expect("delete");
+    WebCryptoStore::open(&db(name)).await.expect("open")
+}
+
+#[wasm_bindgen_test]
+async fn floor_raise_then_read_and_a_lower_raise_is_ignored() {
+    let store = fresh("floor-laws").await;
+    let n = floor_name("relay-a");
+    assert_eq!(store.read_floor(&n).await.unwrap(), None);
+    assert_eq!(store.raise_floor(&n, (3, 7)).await.unwrap(), (3, 7));
+    assert_eq!(store.read_floor(&n).await.unwrap(), Some((3, 7)));
+    assert_eq!(store.raise_floor(&n, (3, 8)).await.unwrap(), (3, 8));
+    assert_eq!(store.raise_floor(&n, (4, 0)).await.unwrap(), (4, 0));
+    assert_eq!(store.raise_floor(&n, (3, 9)).await.unwrap(), (4, 0));
+    assert_eq!(store.raise_floor(&n, (0, 0)).await.unwrap(), (4, 0));
+    assert_eq!(store.read_floor(&n).await.unwrap(), Some((4, 0)));
+    store.delete_database().await.expect("cleanup");
+}
+
+#[wasm_bindgen_test]
+async fn floor_names_are_isolated_and_one_counter_is_n_0() {
+    let store = fresh("floor-names").await;
+    let a = floor_name("x");
+    let b = floor_name("x-1");
+    assert_eq!(store.raise_floor(&a, (9, 9)).await.unwrap(), (9, 9));
+    assert_eq!(store.read_floor(&b).await.unwrap(), None);
+    let c = floor_name("sealed-store-1");
+    for i in 1..=5 {
+        assert_eq!(store.raise_floor(&c, (i, 0)).await.unwrap(), (i, 0));
+    }
+    assert_eq!(store.read_floor(&c).await.unwrap(), Some((5, 0)));
+    assert_eq!(store.read_floor(&a).await.unwrap(), Some((9, 9)));
+    store.delete_database().await.expect("cleanup");
+}
+
+#[wasm_bindgen_test]
+async fn floor_values_from_2_pow_53_are_refused_and_change_nothing() {
+    let store = fresh("floor-range").await;
+    let n = floor_name("wide");
+    let top = (1u64 << 53) - 1;
+    assert_eq!(store.raise_floor(&n, (top, top)).await.unwrap(), (top, top));
+    for bad in [(1u64 << 53, 0), (0, 1u64 << 53), (u64::MAX, u64::MAX)] {
+        assert_eq!(
+            store.raise_floor(&n, bad).await,
+            Err(FloorError::OutOfRange)
+        );
+    }
+    assert_eq!(store.read_floor(&n).await.unwrap(), Some((top, top)));
+    store.delete_database().await.expect("cleanup");
+}
+
+#[wasm_bindgen_test]
+async fn a_floor_survives_a_reopen_and_is_gone_with_the_database() {
+    let n = floor_name("kept");
+    let store = fresh("floor-reopen").await;
+    store.raise_floor(&n, (6, 1)).await.unwrap();
+    store.close();
+    let store = WebCryptoStore::open(&db("floor-reopen"))
+        .await
+        .expect("reopen");
+    assert_eq!(store.read_floor(&n).await.unwrap(), Some((6, 1)));
+    // the limit: clearing the site's data (here: deleting the database) removes the floor
+    store.delete_database().await.expect("delete");
+    let store = WebCryptoStore::open(&db("floor-reopen"))
+        .await
+        .expect("reopen");
+    assert_eq!(store.read_floor(&n).await.unwrap(), None);
+    store.delete_database().await.expect("cleanup");
+}
+
+#[wasm_bindgen_test]
+async fn two_tabs_raising_at_once_keep_the_largest() {
+    let n = floor_name("tabs");
+    let a = fresh("floor-tabs").await;
+    let b = WebCryptoStore::open(&db("floor-tabs")).await.expect("open");
+    let raises = (1..=10u64).map(|i| {
+        let s = if i % 2 == 0 { &a } else { &b };
+        let n = n.clone();
+        async move { s.raise_floor(&n, (i, 0)).await.unwrap() }
+    });
+    futures::future::join_all(raises).await;
+    assert_eq!(a.read_floor(&n).await.unwrap(), Some((10, 0)));
+    b.close();
+    a.delete_database().await.expect("cleanup");
+}

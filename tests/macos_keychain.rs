@@ -20,8 +20,11 @@
 //! would.
 #![cfg(target_os = "macos")]
 
+mod floor_laws;
+
 use alice_crypto::{KeyProvider, KeyProviderError};
 use alice_os_keystore::desktop::{keychain_serialized, MacosKeychainStore};
+use alice_os_keystore::MonotonicFloor;
 use security_framework::base::Error as SecError;
 use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
 use security_framework::passwords;
@@ -569,4 +572,85 @@ fn a_marker_added_after_another_threads_search_still_counts() {
         // the number of the removed key is not issued again
         assert_eq!(store.rotate().unwrap(), round * 2);
     }
+}
+
+// ---- floors (the laws in floor_laws; account `floor-<name>-<hi, 20 digits>-<lo, 20 digits>`) ----
+
+const F5: &str = "floor-a-00000000000000000005-00000000000000000000";
+const F7: &str = "floor-a-00000000000000000007-00000000000000000000";
+
+#[test]
+fn floor_laws_hold_in_the_keychain() {
+    let s = Service::new("floor-laws");
+    let store = MacosKeychainStore::new(&s.0);
+    floor_laws::raise_then_read(&store);
+    floor_laws::lower_raise_is_ignored(&store);
+    floor_laws::names_are_isolated(&store);
+    floor_laws::one_counter_as_n_0(&store);
+    floor_laws::full_range(&store);
+    // the floors left no key items and no markers
+    assert!(s.accounts().iter().all(|a| a.starts_with("floor-")));
+}
+
+#[test]
+fn a_floor_raise_leaves_one_item_named_by_the_value() {
+    let s = Service::new("floor-item");
+    let store = MacosKeychainStore::new(&s.0);
+    let a = floor_laws::name("a");
+    store.raise(&a, (5, 0)).unwrap();
+    assert_eq!(s.accounts(), [F5]);
+    store.raise(&a, (7, 0)).unwrap();
+    assert_eq!(s.accounts(), [F7]);
+    // a lower raise creates nothing
+    store.raise(&a, (6, 0)).unwrap();
+    assert_eq!(s.accounts(), [F7]);
+}
+
+#[test]
+fn an_older_floor_item_left_beside_a_newer_one_reads_the_newer() {
+    let s = Service::new("floor-crash");
+    // a raise stopped between its create and the removal of the older item
+    set_generic_password(&s.0, F7, b"floor").unwrap();
+    set_generic_password(&s.0, F5, b"floor").unwrap();
+    let store = MacosKeychainStore::new(&s.0);
+    let a = floor_laws::name("a");
+    assert_eq!(store.read(&a).unwrap(), Some((7, 0)));
+    // the next raise (even a lower one) clears the older item
+    assert_eq!(store.raise(&a, (6, 0)).unwrap(), (7, 0));
+    assert_eq!(s.accounts(), [F7]);
+}
+
+#[test]
+fn malformed_floor_items_are_ignored() {
+    let s = Service::new("floor-malformed");
+    for account in [
+        "floor-a-5-0",
+        "floor-a-0000000000000000000x-00000000000000000000",
+        "floor-a-99999999999999999999-00000000000000000000",
+        "floor-A-00000000000000000009-00000000000000000000",
+        "floor-a00000000000000000009-00000000000000000000",
+        "floor-b-00000000000000000009-00000000000000000000",
+        "gen-1",
+    ] {
+        set_generic_password(&s.0, account, b"floor").unwrap();
+    }
+    let store = MacosKeychainStore::new(&s.0);
+    let a = floor_laws::name("a");
+    assert_eq!(store.read(&a).unwrap(), None);
+    assert_eq!(store.raise(&a, (1, 0)).unwrap(), (1, 0));
+    assert_eq!(store.read(&a).unwrap(), Some((1, 0)));
+}
+
+#[test]
+fn deleting_every_floor_item_of_a_name_reads_none_again() {
+    // the limit: a process of the same user can delete the items, and the floor is gone
+    let s = Service::new("floor-deleted");
+    let store = MacosKeychainStore::new(&s.0);
+    let a = floor_laws::name("a");
+    store.raise(&a, (7, 0)).unwrap();
+    for account in s.accounts() {
+        delete_generic_password(&s.0, &account).unwrap();
+    }
+    assert_eq!(store.read(&a).unwrap(), None);
+    assert_eq!(store.raise(&a, (1, 0)).unwrap(), (1, 0));
 }

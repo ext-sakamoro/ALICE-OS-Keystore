@@ -179,3 +179,87 @@ fn an_unknown_foreign_error_is_unavailable_without_its_text() {
     assert!(matches!(e, ForeignVaultError::Unavailable { .. }), "{e:?}");
     assert!(!e.to_string().contains("/secret/path"), "{e}");
 }
+
+// ---- the foreign floor (the laws in floor_laws, over a foreign store keeping a map) ----
+
+mod floor_laws;
+
+use alice_os_keystore::ffi::{
+    FloorValue, ForeignFloorAdapter, ForeignFloorError, ForeignMonotonicFloor,
+};
+use alice_os_keystore::{FloorError, MonotonicFloor};
+
+/// A foreign floor store as an app would write it, the maximum kept per name
+#[derive(Default)]
+struct MapFloor {
+    floors: std::sync::Mutex<std::collections::HashMap<String, (u64, u64)>>,
+    locked: bool,
+    /// a broken store that reports the old value instead of keeping the larger one
+    lowers: bool,
+}
+
+impl ForeignMonotonicFloor for MapFloor {
+    fn read_floor(&self, name: String) -> Result<Option<FloorValue>, ForeignFloorError> {
+        if self.locked {
+            return Err(ForeignFloorError::Unavailable {
+                reason: "/private/path".into(),
+            });
+        }
+        Ok(self
+            .floors
+            .lock()
+            .unwrap()
+            .get(&name)
+            .map(|&(hi, lo)| FloorValue { hi, lo }))
+    }
+    fn raise_floor(&self, name: String, to: FloorValue) -> Result<FloorValue, ForeignFloorError> {
+        if self.locked {
+            return Err(ForeignFloorError::Unavailable {
+                reason: "/private/path".into(),
+            });
+        }
+        if self.lowers {
+            return Ok(FloorValue { hi: 0, lo: 0 });
+        }
+        let mut m = self.floors.lock().unwrap();
+        let e = m.entry(name).or_insert((to.hi, to.lo));
+        *e = (*e).max((to.hi, to.lo));
+        Ok(FloorValue { hi: e.0, lo: e.1 })
+    }
+}
+
+#[test]
+fn a_foreign_floor_follows_the_floor_laws() {
+    let f = ForeignFloorAdapter::new(Box::<MapFloor>::default());
+    floor_laws::raise_then_read(&f);
+    floor_laws::lower_raise_is_ignored(&f);
+    floor_laws::names_are_isolated(&f);
+    floor_laws::one_counter_as_n_0(&f);
+    floor_laws::full_range(&f);
+}
+
+#[test]
+fn a_foreign_floor_error_is_unavailable_without_the_foreign_text() {
+    let f = ForeignFloorAdapter::new(Box::new(MapFloor {
+        locked: true,
+        ..MapFloor::default()
+    }));
+    let n = floor_laws::name("a");
+    for e in [f.read(&n).unwrap_err(), f.raise(&n, (1, 0)).unwrap_err()] {
+        assert!(matches!(e, FloorError::Unavailable(_)));
+        assert!(!e.to_string().contains("/private/path"));
+    }
+}
+
+#[test]
+fn a_foreign_raise_reporting_a_lower_floor_is_refused() {
+    let f = ForeignFloorAdapter::new(Box::new(MapFloor {
+        lowers: true,
+        ..MapFloor::default()
+    }));
+    let n = floor_laws::name("a");
+    assert!(matches!(
+        f.raise(&n, (3, 0)),
+        Err(FloorError::Unavailable(_))
+    ));
+}

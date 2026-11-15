@@ -89,12 +89,20 @@ use secret_service::{EncryptionType, Error as SsError};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-use super::{by_generation_of, current_of, generation_of, rotate_of, GenerationItems, Inventory};
-use crate::{Key, KeyGeneration, KeyProvider, KeyProviderError};
+use super::{
+    by_generation_of, current_of, floor_raise_of, floor_read_of, generation_of, rotate_of,
+    FloorItems, GenerationItems, Inventory,
+};
+use crate::floor::{parse_value, value_text};
+use crate::{
+    FloorError, FloorName, Key, KeyGeneration, KeyProvider, KeyProviderError, MonotonicFloor,
+};
 
 const SERVICE_ATTR: &str = "keystore-service";
 const GENERATION_ATTR: &str = "keystore-generation";
 const ISSUED_ATTR: &str = "keystore-issued";
+const FLOOR_ATTR: &str = "keystore-floor";
+const FLOOR_VALUE_ATTR: &str = "keystore-floor-value";
 const CONTENT_TYPE: &str = "application/octet-stream";
 
 /// How long `current` / `rotate` wait for the service's lock by default
@@ -704,6 +712,113 @@ impl KeyProvider for LinuxSecretServiceStore {
 
     fn by_generation(&self, generation: KeyGeneration) -> Result<Key, KeyProviderError> {
         by_generation_of(self, generation)
+    }
+}
+
+fn floor_error(e: KeyProviderError) -> FloorError {
+    match e {
+        KeyProviderError::Unavailable(why) | KeyProviderError::Irrecoverable(why) => {
+            FloorError::Unavailable(why)
+        }
+        _ => FloorError::Unavailable("the Secret Service answered unexpectedly"),
+    }
+}
+
+/// Floor items with the value each holds (`None` for a value that does not parse)
+type FloorItemList<'a> = Vec<(Option<(u64, u64)>, Item<'a>)>;
+
+impl LinuxSecretServiceStore {
+    /// The items of floor `name` with their value attribute
+    fn floor_items<'a>(
+        &self,
+        c: &'a Collection<'_>,
+        name: &FloorName,
+    ) -> Result<FloorItemList<'a>, KeyProviderError> {
+        let items = c
+            .search_items(HashMap::from([
+                (SERVICE_ATTR, self.service.as_str()),
+                (FLOOR_ATTR, name.as_str()),
+            ]))
+            .map_err(|e| unavailable(&e))?;
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            let attrs = item.get_attributes().map_err(|e| unavailable(&e))?;
+            let value = (attrs.get(FLOOR_ATTR).map(String::as_str) == Some(name.as_str()))
+                .then(|| attrs.get(FLOOR_VALUE_ATTR).and_then(|v| parse_value(v)))
+                .flatten();
+            out.push((value, item));
+        }
+        Ok(out)
+    }
+}
+
+impl FloorItems for LinuxSecretServiceStore {
+    fn floor_values(&self, name: &FloorName) -> Result<Vec<(u64, u64)>, FloorError> {
+        self.with_collection(|c, _| {
+            Ok(self
+                .floor_items(c, name)?
+                .into_iter()
+                .filter_map(|(v, _)| v)
+                .collect())
+        })
+        .map_err(floor_error)
+    }
+
+    /// Create the item of `v` and wait until the search readers use lists it, so the removal
+    /// of the older items that follows never leaves a reader with none
+    fn create_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        let value = value_text(v);
+        self.with_collection(|c, _| {
+            let created = c
+                .create_item(
+                    &format!("{} floor {name}", self.service),
+                    HashMap::from([
+                        (SERVICE_ATTR, self.service.as_str()),
+                        (FLOOR_ATTR, name.as_str()),
+                        (FLOOR_VALUE_ATTR, value.as_str()),
+                    ]),
+                    b"",
+                    false,
+                    CONTENT_TYPE,
+                )
+                .map_err(|e| unavailable(&e))?;
+            wait_listed(
+                || {
+                    Ok(self
+                        .floor_items(c, name)?
+                        .iter()
+                        .any(|(_, i)| i.item_path == created.item_path))
+                },
+                LISTED_DEADLINE,
+            )
+        })
+        .map_err(floor_error)
+    }
+
+    fn remove_floor(&self, name: &FloorName, v: (u64, u64)) -> Result<(), FloorError> {
+        self.with_collection(|c, _| {
+            for (value, item) in self.floor_items(c, name)? {
+                if value == Some(v) {
+                    item.delete().map_err(|e| unavailable(&e))?;
+                }
+            }
+            Ok(())
+        })
+        .map_err(floor_error)
+    }
+}
+
+/// Floors as create-only Secret Service items (see the floor model in `desktop`): any process
+/// of the same user that reaches the session bus can delete them while the keyring is unlocked.
+/// A raise holds the service's lock (as `current` and `rotate` do); a read takes none
+impl MonotonicFloor for LinuxSecretServiceStore {
+    fn read(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
+        floor_read_of(self, name)
+    }
+
+    fn raise(&self, name: &FloorName, to: (u64, u64)) -> Result<(u64, u64), FloorError> {
+        let _lock = lock_service(&self.service, self.lock_deadline).map_err(floor_error)?;
+        floor_raise_of(self, name, to)
     }
 }
 
