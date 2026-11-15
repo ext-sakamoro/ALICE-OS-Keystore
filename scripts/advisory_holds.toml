@@ -33,6 +33,8 @@ dependents = ["zbus 5.19.0", "zbus_macros 5.19.0", "zbus_names 4.3.5"]
 fixed = []
 expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
+reason = "zvariant 5.15.1 <- zbus 5.19.0 <- (alice-os-keystore, secret-service 5.2.0 <- alice-os-keystore); compiled in the default build on Linux only (target_os = \"linux\" dependencies), not on macOS / Windows; zbus 6 drops it, and the secret-service release on zbus 6 is 6.0.0-rc.1 (a pre-release cargo does not select)"
+until_release = [{crate = "secret-service", newer_than = "5.2.0"}]
 
 [[hold]]
 id = "RUSTSEC-2026-0371"
@@ -43,6 +45,8 @@ dependents = ["zbus 5.19.0", "zbus_macros 5.19.0"]
 fixed = []
 expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
+reason = "zbus_names 4.3.5 <- (zbus 5.19.0, zbus_macros 5.19.0) <- alice-os-keystore and secret-service 5.2.0; compiled in the default build on Linux only, not on macOS / Windows; zbus 6 drops it, secret-service on zbus 6 is only 6.0.0-rc.1"
+until_release = [{crate = "secret-service", newer_than = "5.2.0"}]
 
 [[hold]]
 id = "RUSTSEC-2026-0372"
@@ -53,3 +57,5 @@ dependents = ["zvariant 5.15.1"]
 fixed = []
 expires = "2026-11-26"
 until = "secret-service on zbus 6, or another maintained client with the encrypted session"
+reason = "zvariant_derive 5.15.1 (proc-macro) <- zvariant 5.15.1 <- zbus 5.19.0 <- alice-os-keystore and secret-service 5.2.0; built for Linux targets only; zbus 6 drops it, secret-service on zbus 6 is only 6.0.0-rc.1"
+until_release = [{crate = "secret-service", newer_than = "5.2.0"}]
