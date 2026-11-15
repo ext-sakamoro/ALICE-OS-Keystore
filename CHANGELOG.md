@@ -22,6 +22,7 @@
 - README: 自分の crate の生成 Swift とこの crate の生成 Swift は 1 つの Swift module で compile する必要があることを書いた
 
 ### Changed
+- `LinuxSecretServiceStore`: 同じ process の同じ service (と `call_timeout`) の store はすべて 1 つの接続を共有する (最初の呼び出しで作り、process の終了か `close_shared()` まで残す) store を要求や thread ごとに作っても接続は 1 つ 通信を暗号化する鍵は process の終了か `close_shared()` までメモリにある (store の drop では消えない) 他の呼び出しが bus で詰まって待たされた呼び出しは `lock_deadline` で `Unavailable` fork した子は親の接続を使わず自分の接続を開く 追加: `close_shared()` CI の競わせる試験を全回数に戻した (`ALICE_KEYSTORE_STRESS_ROUNDS` を外した)
 - `LinuxSecretServiceStore`: 1 つの store が最初の呼び出しで接続を 1 つ作り (暗号化の鍵の取り決めも 1 回)、生きている間使い回す (これまでは呼び出しごとに接続と DH の `OpenSession`) 接続の出入りが続く中で gnome-keyring が異常終了していたため D-Bus の呼び出しは 1 回ごとに最大 `call_timeout` (既定 5 秒) 待つ service に届かない時は新しい接続で 1 回だけやり直す (作成は、応答が失われても作られている場合があるので、やり直す前に自分の鍵を持つ item を探し、あればそれを使う) 通信を暗号化する鍵は store が生きている間メモリにある (store を drop すると接続ごと終わる) CI の競わせる試験は 8 回ずつのまま (全回数では 7 回中 1 回 gnome-keyring が異常終了した: 試験は thread と round ごとに新しい store を作るので、store ごとの接続の使い回しでは接続の出入りが残る)
 - CI: package-integrity を ALICE-Law の共有 file `scripts/package_integrity.py` (と `alice_siblings_check.py` / `id_move_check.py` / `release_baseline.py`、試験 `test_package_integrity.py`) に替え、`scripts/alice_local_registry.py` と試験を削除 git の main branch から取る `alice-crypto` (crates.io に無い 0.7) は blocked と名指し、Cargo.lock が解決した commit で build する preflight を生成し直した
 - 依存 `alice-crypto` を rev ed065ad (0.6.0) の固定から ALICE-Crypto の `branch = "main"` + version 0.7 に替えた (Cargo.lock / fuzz / tools/foreign-vault-probe の lock も) 使う API は 0.7 でも同じで、試験は変更なし

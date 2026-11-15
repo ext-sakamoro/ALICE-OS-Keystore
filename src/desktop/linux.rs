@@ -44,11 +44,17 @@
 //! model in `desktop`); the store looks for a marker before making one, and a duplicate marker
 //! from a race is harmless (only its presence counts).
 //!
-//! A store opens one connection to the session bus and one encrypted session with the service on
-//! first use and keeps them for its lifetime, shared by every call of that instance (calls of one
-//! instance take turns on it). Before, every call opened its own connection and session; the churn
-//! of connections that came and went every few milliseconds is what gnome-keyring was handling
-//! when it aborted. Each D-Bus call waits at most [`LinuxSecretServiceStore::call_timeout`] (5 s by
+//! All the stores of one service in a process share one connection to the session bus and one
+//! encrypted session with the service (one per service and call timeout): it is opened on the first
+//! call of any of them and kept until the process exits, even when every store is dropped, so a
+//! program that makes a store per request or per thread still opens one connection. Calls of all
+//! those stores take turns on it; a call that has waited [`LinuxSecretServiceStore::lock_deadline`]
+//! for its turn (another call stuck on the bus) is [`KeyProviderError::Unavailable`].
+//! [`LinuxSecretServiceStore::close_shared`] closes it for every store of the service in the process
+//! (the next call opens a new one). A child process made by `fork` does not use or close the
+//! connections it inherits (their socket is the parent's): it opens its own. Before, every call
+//! opened its own connection and session; the churn of connections that came and went every few
+//! milliseconds is what gnome-keyring was handling when it aborted. Each D-Bus call waits at most [`LinuxSecretServiceStore::call_timeout`] (5 s by
 //! default) for its answer. A call that finds the service unreachable (no answer in time, the
 //! connection gone, the daemon restarted) drops the connection and runs once more on a new one; a
 //! second failure is [`KeyProviderError::Unavailable`]. Reads simply run again. A create that runs
@@ -59,8 +65,9 @@
 //! connection) times the call timeout, plus the listing wait of a create.
 //!
 //! The session's key (the AES key both sides derive from the Diffie-Hellman exchange, used to
-//! encrypt the secrets on the bus) is held in memory for as long as the store lives, instead of for
-//! one call; dropping the store ends the session and closes the connection. It is kept inside the
+//! encrypt the secrets on the bus) is therefore held in memory until the process exits or
+//! [`LinuxSecretServiceStore::close_shared`] is called, instead of for one call; dropping a store
+//! does not end it. It is kept inside the
 //! `secret-service` crate, which does not zero it when the session is dropped and gives no access
 //! to it; the key bytes this crate reads from the service are zeroed after use, as before.
 //!
@@ -72,6 +79,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
+use std::sync::{Arc, MutexGuard, OnceLock};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -107,8 +115,73 @@ pub struct LinuxSecretServiceStore {
     service: String,
     lock_deadline: Duration,
     call_timeout: Duration,
-    /// The connection and session of this store, made on first use and kept
-    session: Mutex<Option<SecretService<'static>>>,
+    /// The process's shared connection for this service (and call timeout), with the process id it
+    /// was looked up in: resolved on the first call, again after a fork
+    shared: Mutex<Option<(u32, Shared)>>,
+}
+
+/// One shared connection and session: `None` until the first call, and after a failure or
+/// `close_shared`
+type Shared = Arc<Mutex<Option<SecretService<'static>>>>;
+
+/// What a shared connection is for: the process (a forked child gets its own), the service, and the
+/// call timeout (the bus connection carries it, so stores with another timeout do not share it)
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SharedKey {
+    pid: u32,
+    service: String,
+    call_timeout: Duration,
+}
+
+/// Every shared connection of the process, kept until it exits (a store made and dropped per request
+/// would otherwise open and close one each time)
+static REGISTRY: OnceLock<Mutex<HashMap<SharedKey, Shared>>> = OnceLock::new();
+
+/// The shared connection of `service` with `call_timeout` in process `pid`; entries of another
+/// process (inherited across a `fork`) are dropped from the table without being closed or used
+fn shared_in(
+    registry: &Mutex<HashMap<SharedKey, Shared>>,
+    pid: u32,
+    service: &str,
+    call_timeout: Duration,
+) -> Shared {
+    let mut map = registry.lock().unwrap_or_else(PoisonError::into_inner);
+    let inherited: Vec<SharedKey> = map.keys().filter(|k| k.pid != pid).cloned().collect();
+    for k in inherited {
+        if let Some(entry) = map.remove(&k) {
+            // the parent's socket: closing or using it here would write into the parent's stream
+            std::mem::forget(entry);
+        }
+    }
+    map.entry(SharedKey {
+        pid,
+        service: service.to_owned(),
+        call_timeout,
+    })
+    .or_default()
+    .clone()
+}
+
+/// `mutex`'s guard, waiting at most `deadline` for another holder (a call stuck on the bus)
+fn lock_within<T>(
+    mutex: &Mutex<T>,
+    deadline: Duration,
+) -> Result<MutexGuard<'_, T>, KeyProviderError> {
+    let start = Instant::now();
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Ok(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if start.elapsed() < deadline => {
+                std::thread::sleep(POLL);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err(KeyProviderError::Unavailable(
+                    "another call held the Secret Service connection past the deadline",
+                ))
+            }
+        }
+    }
 }
 
 /// Which run of a call this is: the first, or the one on a new connection after the service could
@@ -338,7 +411,7 @@ impl LinuxSecretServiceStore {
             service: service.to_owned(),
             lock_deadline: LOCK_DEADLINE,
             call_timeout: CALL_TIMEOUT,
-            session: Mutex::new(None),
+            shared: Mutex::new(None),
         }
     }
 
@@ -351,13 +424,49 @@ impl LinuxSecretServiceStore {
         self
     }
 
-    /// Run `op` on the default collection over this store's connection (made on first use and
+    /// Close the process's shared connection for this service, for every store of the service in
+    /// the process: the session's key is dropped, and the next call of any of them opens a new one
+    ///
+    /// # Errors
+    /// [`KeyProviderError::Unavailable`] when another call holds the connection past
+    /// [`LinuxSecretServiceStore::lock_deadline`]
+    pub fn close_shared(&self) -> Result<(), KeyProviderError> {
+        let shared = self.shared();
+        *lock_within(&shared, self.lock_deadline)? = None;
+        Ok(())
+    }
+
+    /// The process's shared connection for this store's service and call timeout
+    fn shared(&self) -> Shared {
+        let pid = std::process::id();
+        let mut current = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((p, s)) = current.as_ref() {
+            if *p == pid {
+                return s.clone();
+            }
+        }
+        if let Some(inherited) = current.take() {
+            // looked up in the parent before a fork: not this process's to use or close
+            std::mem::forget(inherited);
+        }
+        let s = shared_in(
+            REGISTRY.get_or_init(Mutex::default),
+            pid,
+            &self.service,
+            self.call_timeout,
+        );
+        *current = Some((pid, s.clone()));
+        s
+    }
+
+    /// Run `op` on the default collection over the process's shared connection (made on first use and
     /// kept), once more on a new connection when the service cannot be reached
     fn with_collection<T>(
         &self,
         mut op: impl FnMut(&Collection<'_>, Attempt) -> Result<T, KeyProviderError>,
     ) -> Result<T, KeyProviderError> {
-        let mut slot = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let shared = self.shared();
+        let mut slot = lock_within(&shared, self.lock_deadline)?;
         with_retry(
             &mut slot,
             || connect(self.call_timeout),
@@ -787,6 +896,59 @@ mod tests {
             },
         );
         assert_eq!((r, made), (Ok(true), 1));
+    }
+
+    #[test]
+    fn stores_of_one_service_in_one_process_share_one_connection() {
+        let registry = Mutex::default();
+        let t = Duration::from_secs(5);
+        let a = shared_in(&registry, 10, "svc", t);
+        assert!(Arc::ptr_eq(&a, &shared_in(&registry, 10, "svc", t)));
+        // another service, or another call timeout (carried by the connection), is another connection
+        assert!(!Arc::ptr_eq(&a, &shared_in(&registry, 10, "other", t)));
+        assert!(!Arc::ptr_eq(
+            &a,
+            &shared_in(&registry, 10, "svc", Duration::from_secs(1))
+        ));
+        assert_eq!(registry.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_forked_child_does_not_use_the_parents_connections() {
+        let registry = Mutex::default();
+        let t = Duration::from_secs(5);
+        let parent = shared_in(&registry, 10, "svc", t);
+        let child = shared_in(&registry, 11, "svc", t);
+        assert!(!Arc::ptr_eq(&parent, &child));
+        // the parent's entry is gone from the table (forgotten, not closed: the Arc count stays)
+        assert_eq!(registry.lock().unwrap().len(), 1);
+        assert_eq!(Arc::strong_count(&parent), 2);
+    }
+
+    #[test]
+    fn a_waiter_behind_a_stuck_call_gives_up_at_the_deadline() {
+        let m = Arc::new(Mutex::new(()));
+        let held = m.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = {
+            let m = Arc::clone(&m);
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                let r = lock_within(&m, Duration::from_millis(100)).map(|_| ());
+                tx.send((r, start.elapsed())).unwrap();
+            })
+        };
+        // a plain lock would wait for ever: the answer must come while the lock is still held
+        let (r, waited) = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the waiter did not give up");
+        assert!(
+            matches!(r, Err(KeyProviderError::Unavailable(m)) if m.contains("past the deadline"))
+        );
+        assert!(waited >= Duration::from_millis(100));
+        drop(held);
+        thread.join().unwrap();
+        assert!(lock_within(&m, Duration::from_millis(100)).is_ok());
     }
 
     #[test]
