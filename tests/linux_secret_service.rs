@@ -525,7 +525,13 @@ fn helper_process() {
     let service = std::env::var("ALICE_KEYSTORE_TEST_SERVICE").unwrap();
     let go = std::path::PathBuf::from(std::env::var("ALICE_KEYSTORE_TEST_GO").unwrap());
     let store = LinuxSecretServiceStore::new(&service);
+    // a parent that died before writing the file must not leave its children waiting
+    let start = std::time::Instant::now();
     while !go.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "the start file never appeared (the parent test did not start the children)"
+        );
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     match op.as_str() {
