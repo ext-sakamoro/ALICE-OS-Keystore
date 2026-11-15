@@ -23,8 +23,11 @@
 //! So on desktop and in the browser a floor raises the bar for rolling back data (writing the
 //! data directory is no longer enough), but it is **not** protection against a process running
 //! as the same user, which can delete every floor item: a name whose items were all removed
-//! reads `None` again, as if it had never been raised. On iOS and Android the key store is
-//! outside what an attacker who can only write the app's data directory reaches.
+//! reads `None` again, as if it had never been raised. The same process can also raise a floor
+//! as high as it likes (up to `(u64::MAX, u64::MAX)`), and nothing lowers it again, so the
+//! consumer refuses its data from then on: a denial of service, never a rollback. A malformed
+//! stored floor is an error, not `None`. On iOS and Android the key store is outside what an
+//! attacker who can only write the app's data directory reaches.
 //!
 //! The desktop stores keep one item per raise, created once and never rewritten; a raise
 //! creates the item of the new value, then removes the older items of that name (best effort),

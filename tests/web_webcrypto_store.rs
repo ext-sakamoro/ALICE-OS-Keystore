@@ -621,3 +621,55 @@ async fn two_tabs_raising_at_once_keep_the_largest() {
     b.close();
     a.delete_database().await.expect("cleanup");
 }
+
+#[wasm_bindgen::prelude::wasm_bindgen(
+    inline_js = "export function put_meta_raw(dbName, key, value) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(dbName);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const d = open.result;
+      const tx = d.transaction('meta', 'readwrite');
+      tx.objectStore('meta').put(value, key);
+      tx.oncomplete = () => { d.close(); resolve(); };
+      tx.onerror = () => { d.close(); reject(tx.error); };
+    };
+  });
+}"
+)]
+extern "C" {
+    fn put_meta_raw(db: &str, key: &str, value: wasm_bindgen::JsValue) -> js_sys::Promise;
+}
+
+/// Negative: a stored floor that is not two safe integers (corruption, another encoding) is an
+/// error on read and on raise, never "never raised", and a raise writes nothing over it
+#[wasm_bindgen_test]
+async fn a_malformed_stored_floor_is_an_error_and_is_not_overwritten() {
+    let store = fresh("floor-malformed").await;
+    let n = floor_name("relay-m");
+    let malformed: [wasm_bindgen::JsValue; 4] = [
+        "9-9".into(),
+        js_sys::Array::of1(&5.into()).into(),
+        js_sys::Array::of2(&(-1).into(), &0.into()).into(),
+        js_sys::Array::of2(&9_007_199_254_740_992_f64.into(), &0.into()).into(),
+    ];
+    let mut compared = 0;
+    for value in malformed {
+        JsFuture::from(put_meta_raw(&db("floor-malformed"), "floor/relay-m", value))
+            .await
+            .expect("put raw");
+        assert_eq!(
+            store.read_floor(&n).await,
+            Err(FloorError::Unavailable("stored floor is malformed"))
+        );
+        assert_eq!(
+            store.raise_floor(&n, (1, 0)).await,
+            Err(FloorError::Unavailable("stored floor is malformed"))
+        );
+        // still malformed: nothing was written over it
+        assert!(store.read_floor(&n).await.is_err());
+        compared += 1;
+    }
+    assert_eq!(compared, 4);
+    store.delete_database().await.expect("cleanup");
+}

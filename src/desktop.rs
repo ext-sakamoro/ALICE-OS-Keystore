@@ -38,7 +38,9 @@
 //!
 //! So on desktop a floor means that writing the application's data directory is not enough to
 //! roll its state back; it is not protection against a process of the same user, which can
-//! delete every floor item (the name then reads `None`). On iOS / Android the floor belongs in
+//! delete every floor item (the name then reads `None`) or create one with a value as high as
+//! it likes (the consumer then refuses its data: a denial of service, not a rollback). A raise
+//! removes the older items only after the new one is listed. On iOS / Android the floor belongs in
 //! the platform's key store, reached through `crate::ffi::ForeignMonotonicFloor` (feature
 //! `uniffi`).
 //!
@@ -227,6 +229,13 @@ fn floor_raise_of<S: FloorItems>(
         Some(stored) if stored >= to => stored,
         _ => {
             s.create_floor(name, to)?;
+            // the new item must be listed before any older one is removed, so a reader never sees
+            // none (and a create that hit an existing name it cannot parse is not taken as done)
+            if !s.floor_values(name)?.contains(&to) {
+                return Err(FloorError::Unavailable(
+                    "the new floor item is not listed after it was created",
+                ));
+            }
             to
         }
     };

@@ -111,7 +111,7 @@ The desktop stores keep one create-only item per raise and remove the older item
 | `web::WebCryptoStore` (`read_floor` / `raise_floor`, async) | IndexedDB `meta`, key `floor/<name>`, `[hi, lo]`, raised in one readwrite transaction; each half must be below 2^53 (`OutOfRange`) | scripts of the same origin, clearing the site's data, eviction without persistent storage |
 | iOS / Android, `ffi::ForeignMonotonicFloor` (feature `uniffi`) | the platform's Keychain / Keystore, implemented by the app (this crate ships no Swift or Kotlin implementation) | not something that can only write the app's data directory |
 
-So on desktop and in the browser a floor raises the bar (writing the data directory is not enough), but it is not protection against a process running as the same user, which can delete every floor item.
+So on desktop and in the browser a floor raises the bar (writing the data directory is not enough), but it is not protection against a process running as the same user, which can delete every floor item, or raise a floor as high as it likes so the application refuses its own data (denial of service, not rollback). A stored floor that does not parse is an error, never "never raised".
 
 ### Unsafe code
 

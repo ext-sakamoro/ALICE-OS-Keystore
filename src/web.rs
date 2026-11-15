@@ -151,8 +151,9 @@ export function ks_take_seal(db, g, limit) {
   });
 }
 // One readwrite transaction over meta: reads `floor/<name>`, keeps the lexicographically larger of
-// it and [hi, lo] (a stored value that is not two safe non-negative integers counts as absent),
-// writes it when it changed, and resolves the floor after the call as [hi, lo].
+// it and [hi, lo], writes it when it changed, and resolves the floor after the call as [hi, lo]. A
+// stored value that is not two safe non-negative integers rejects with "malformed" and nothing is
+// written (it is never taken as absent, which would let a lower floor be written over it).
 export function ks_raise_floor(db, key, hi, lo) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction("meta", "readwrite");
@@ -163,6 +164,11 @@ export function ks_raise_floor(db, key, hi, lo) {
       const v = request.result;
       const ok = Array.isArray(v) && v.length === 2 &&
         v.every((n) => Number.isSafeInteger(n) && n >= 0);
+      if (v !== undefined && !ok) {
+        out = "malformed";
+        tx.abort();
+        return;
+      }
       if (ok && (v[0] > hi || (v[0] === hi && v[1] >= lo))) {
         out = [v[0], v[1]];
         return;
@@ -172,7 +178,7 @@ export function ks_raise_floor(db, key, hi, lo) {
     };
     tx.oncomplete = () => resolve(out);
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onabort = () => (out === "malformed" ? resolve(out) : reject(tx.error));
   });
 }
 export function ks_close(db) { db.close(); }
@@ -628,14 +634,15 @@ impl WebCryptoStore {
     /// The floor of `name` (see [`crate::floor`]), `None` when it was never raised.
     ///
     /// The floor lives in the object store `meta` under `floor/<name>` as `[hi, lo]`. A stored
-    /// value that is not two integers below 2^53 counts as absent. Clearing the site's data
+    /// value that is not two integers below 2^53 is an error, never `None` (an unreadable floor
+    /// is not a floor that was never raised). Clearing the site's data
     /// removes it (it then reads `None`), and so may eviction without persistent storage
     /// ([`Self::persisted`]); the page's own scripts can write it. It is not protection against
     /// anything that runs in or controls this origin.
     ///
     /// # Errors
     ///
-    /// [`FloorError::Unavailable`] when `IndexedDB` fails.
+    /// [`FloorError::Unavailable`] when `IndexedDB` fails or the stored value is malformed.
     pub async fn read_floor(&self, name: &FloorName) -> Result<Option<(u64, u64)>, FloorError> {
         let value = JsFuture::from(
             ks_get(&self.db, "meta", &floor_key(name).into())
@@ -643,7 +650,12 @@ impl WebCryptoStore {
         )
         .await
         .map_err(|_| FloorError::Unavailable("IndexedDB read failed"))?;
-        Ok(floor_pair(&value))
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        floor_pair(&value)
+            .map(Some)
+            .ok_or(FloorError::Unavailable("stored floor is malformed"))
     }
 
     /// Raise the floor of `name` to at least `to` and return the floor after the call (the
@@ -669,6 +681,9 @@ impl WebCryptoStore {
         )
         .await
         .map_err(|_| FloorError::Unavailable("IndexedDB write failed"))?;
+        if after.as_string().as_deref() == Some("malformed") {
+            return Err(FloorError::Unavailable("stored floor is malformed"));
+        }
         floor_pair(&after).ok_or(FloorError::Unavailable(
             "IndexedDB returned an unexpected floor",
         ))
