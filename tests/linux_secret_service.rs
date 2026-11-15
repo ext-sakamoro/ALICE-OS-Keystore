@@ -27,6 +27,23 @@ use alice_os_keystore::desktop::LinuxSecretServiceStore;
 use secret_service::blocking::SecretService;
 use secret_service::EncryptionType;
 
+/// The test plumbing's own connection, one for the whole test process (the store under test keeps its
+/// own; only the stores the tests race are made fresh each time); `None` while the service cannot be
+/// reached
+fn helper_connection() -> Option<std::sync::MutexGuard<'static, SecretService<'static>>> {
+    static CONN: std::sync::OnceLock<std::sync::Mutex<SecretService<'static>>> =
+        std::sync::OnceLock::new();
+    if CONN.get().is_none() {
+        let ss = SecretService::connect(EncryptionType::Dh).ok()?;
+        let _ = CONN.set(std::sync::Mutex::new(ss));
+    }
+    Some(
+        CONN.get()?
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+}
+
 /// A service name no other test uses; its items are deleted on drop
 struct Service(String);
 
@@ -66,7 +83,7 @@ impl Service {
     }
 
     fn with_attr(&self, attr: &str) -> Vec<(String, u64, String)> {
-        let ss = SecretService::connect(EncryptionType::Dh).unwrap();
+        let ss = helper_connection().expect("the Secret Service is reachable");
         let c = ss.get_default_collection().unwrap();
         let mut out: Vec<_> = c
             .search_items(HashMap::from([("keystore-service", self.0.as_str())]))
@@ -82,7 +99,7 @@ impl Service {
     }
 
     fn remove_marker(&self, generation: &str) {
-        let ss = SecretService::connect(EncryptionType::Dh).unwrap();
+        let ss = helper_connection().expect("the Secret Service is reachable");
         let c = ss.get_default_collection().unwrap();
         for i in c
             .search_items(HashMap::from([
@@ -103,7 +120,7 @@ impl Service {
 
     /// Make an item behind the store's back
     fn put(&self, generation: &str, secret: &[u8]) {
-        let ss = SecretService::connect(EncryptionType::Dh).unwrap();
+        let ss = helper_connection().expect("the Secret Service is reachable");
         let c = ss.get_default_collection().unwrap();
         c.create_item(
             "test",
@@ -116,7 +133,7 @@ impl Service {
     }
 
     fn remove(&self, generation: &str) {
-        let ss = SecretService::connect(EncryptionType::Dh).unwrap();
+        let ss = helper_connection().expect("the Secret Service is reachable");
         let c = ss.get_default_collection().unwrap();
         for i in c.search_items(attrs(&self.0, generation)).unwrap() {
             i.delete().unwrap();
@@ -125,7 +142,7 @@ impl Service {
 
     /// The secret of the item every reader must choose for `generation`
     fn chosen(&self, generation: &str) -> Vec<u8> {
-        let ss = SecretService::connect(EncryptionType::Dh).unwrap();
+        let ss = helper_connection().expect("the Secret Service is reachable");
         let c = ss.get_default_collection().unwrap();
         let items = c.search_items(attrs(&self.0, generation)).unwrap();
         let first = items
@@ -138,7 +155,7 @@ impl Service {
 
 impl Drop for Service {
     fn drop(&mut self) {
-        if let Ok(ss) = SecretService::connect(EncryptionType::Dh) {
+        if let Some(ss) = helper_connection() {
             if let Ok(c) = ss.get_default_collection() {
                 if let Ok(items) =
                     c.search_items(HashMap::from([("keystore-service", self.0.as_str())]))
@@ -687,28 +704,40 @@ fn the_store_is_send_and_sync() {
     shareable::<LinuxSecretServiceStore>();
 }
 
-/// The child of `one_store_opens_one_session_for_many_operations`: many operations on one store
+/// The child of `the_stores_of_a_service_share_one_session`: many stores of one service, in turn and at once
 /// (it does nothing unless `ALICE_KEYSTORE_TEST_OPS` names a service)
 #[test]
 fn ops_helper() {
     let Ok(service) = std::env::var("ALICE_KEYSTORE_TEST_OPS") else {
         return;
     };
-    let store = LinuxSecretServiceStore::new(&service);
-    store.current().unwrap();
+    // a store per operation, as a program that makes one per request would
+    LinuxSecretServiceStore::new(&service).current().unwrap();
     for _ in 0..5 {
-        store.rotate().unwrap();
+        LinuxSecretServiceStore::new(&service).rotate().unwrap();
     }
     for g in 1..=6 {
-        store.by_generation(g).unwrap();
+        LinuxSecretServiceStore::new(&service)
+            .by_generation(g)
+            .unwrap();
     }
+    // and stores in threads at once
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| LinuxSecretServiceStore::new(&service).current().unwrap());
+        }
+    });
+    let store = LinuxSecretServiceStore::new(&service);
     assert_eq!(store.current().unwrap().0, 6);
     assert_eq!(store.duplicate_count().unwrap(), 0);
+    // closing ends the shared connection for every store of the service; the next call opens one
+    store.close_shared().unwrap();
+    LinuxSecretServiceStore::new(&service).current().unwrap();
     println!("OPS-DONE");
 }
 
 #[test]
-fn one_store_opens_one_session_for_many_operations() {
+fn the_stores_of_a_service_share_one_session() {
     // the child runs under its own private bus (scripts/with_keyring.sh), so that bus's record holds
     // only the child's calls; before, every operation opened a connection and a session of its own
     let dir = tempfile_dir();
@@ -753,10 +782,11 @@ fn one_store_opens_one_session_for_many_operations() {
         service_calls > 10,
         "only {service_calls} Secret Service calls were recorded"
     );
+    // one session for all the stores of the service, then one after close_shared
     assert_eq!(
         calls("OpenSession"),
-        1,
-        "one store opened {} sessions for {service_calls} Secret Service calls",
+        2,
+        "the stores of one service opened {} sessions for {service_calls} Secret Service calls",
         calls("OpenSession")
     );
 }
