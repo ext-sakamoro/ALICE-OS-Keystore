@@ -291,7 +291,11 @@ fn lock_service(service: &str, deadline: Duration) -> Result<ServiceLock, KeyPro
     let path = lock_path_of(service).ok_or(KeyProviderError::Unavailable(
         "XDG_RUNTIME_DIR is not set: the key store has no place for its lock",
     ))?;
-    let dir = path.parent().expect("the lock path has a directory");
+    let Some(dir) = path.parent() else {
+        return Err(KeyProviderError::Unavailable(
+            "the key store's lock path has no directory",
+        ));
+    };
     match std::fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -349,17 +353,18 @@ fn with_retry<S, T>(
 ) -> Result<T, KeyProviderError> {
     let mut last = KeyProviderError::Unavailable(UNREACHABLE);
     for attempt in [Attempt::First, Attempt::Retry] {
-        if slot.is_none() {
-            match connect() {
-                Ok(session) => *slot = Some(session),
+        let session = match slot.as_ref() {
+            Some(session) => session,
+            None => match connect() {
+                Ok(session) => &*slot.insert(session),
                 Err(e) if is_unreachable(&e) => {
                     last = e;
                     continue;
                 }
                 Err(e) => return Err(e),
-            }
-        }
-        match op(slot.as_ref().expect("a session was just made"), attempt) {
+            },
+        };
+        match op(session, attempt) {
             Ok(v) => return Ok(v),
             Err(e) if is_unreachable(&e) => {
                 *slot = None;
