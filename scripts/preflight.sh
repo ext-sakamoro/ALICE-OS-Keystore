@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev 22eeb4ae73784d711cc6d977ce4e930ee9914972
+# generator rev 2ec9d443da0b4e45e82b8b5ced0ba4dd48484af1
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -31,6 +31,26 @@ cd "$(dirname "$0")/.."
 # release removes it only while it names the releasing shell. A wait whose place has not moved for ALICE_HEAVY_SLOT_STALL_SECS (default 10800) or past ALICE_HEAVY_SLOT_TIMEOUT in all (default 28800) fails; the holder's own nested runs
 # (ALICE_HEAVY_SLOT_HELD) run inside its slot.
 heavy_slot_dir() { printf '%s\n' "${ALICE_HEAVY_SLOT_DIR:-$HOME/.cache/alice-heavy-slot}"; }
+# Disk admission (disk_reserve.py) is on for every heavy and short take; no environment name turns it off. A test
+# turns it off for its own slot dir only, with a file `disk-admission-off` in that dir. A slot dir under the account's
+# home (from the password database, whatever HOME says) refuses the file: the machine's queue (.cache/alice-heavy-slot
+# there) and the Air's receipt queue (remote-receipts/slot there) always admit by disk; a test's dir is a temporary dir.
+# Prints nothing but a refusal; returns 0 = admission on, 1 = off (a test's dir), 2 = refused.
+heavy_slot_disk_admits() {
+  local d="$1" home
+  [ -e "$d/disk-admission-off" ] || return 0
+  home=$(perl -e 'print((getpwuid($<))[7])')
+  local real
+  real=$(cd "$d" 2>/dev/null && pwd -P) || real=$d
+  home=$(cd "$home" 2>/dev/null && pwd -P) || home=""
+  case "$real/" in
+    "$home"/*)
+      echo "heavy slot: $d/disk-admission-off is refused in a slot dir under the account's home (remove it; disk admission stays on)" >&2
+      return 2 ;;
+  esac
+  [ -n "$home" ] || { echo "heavy slot: the account's home is unknown; $d/disk-admission-off is refused" >&2; return 2; }
+  return 1
+}
 heavy_slot_count() {
   case "${ALICE_HEAVY_SLOTS:-2}" in
     [1-9] | 1[0-6]) printf '%s\n' "${ALICE_HEAVY_SLOTS:-2}" ;;
@@ -126,9 +146,13 @@ heavy_slot_acquire() {
     # one short slot, its own queue; a nested take (the preflight inside) adopts it through ALICE_HEAVY_SLOT_HELD above
     n=1 queue=queue-short lock=short. info=info.short.
   fi
-  # disk reservations (disk_reserve.py): heavy and short takes, unless ALICE_HEAVY_SLOT_DISK=0
-  local dscript="" dkey="${HEAVY_SLOT_DISK_KEY:-$label}"
-  if [ "$pool" != light ] && [ "${ALICE_HEAVY_SLOT_DISK:-1}" != 0 ]; then
+  # disk reservations (disk_reserve.py): heavy and short takes, unless a test's slot dir turns them off
+  local dscript="" dkey="${HEAVY_SLOT_DISK_KEY:-$label}" dadm=0
+  if [ "$pool" != light ]; then
+    heavy_slot_disk_admits "$d" || dadm=$?
+    [ "$dadm" = 2 ] && return 2
+  fi
+  if [ "$pool" != light ] && [ "$dadm" = 0 ]; then
     dscript="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/disk_reserve.py"
     [ -f "$dscript" ] || dscript=""
   fi
@@ -142,8 +166,11 @@ heavy_slot_acquire() {
       return 1
     fi
   done
-  exec 8< <(exec perl -MFcntl=:flock -MTime::HiRes=time,sleep -e '
-    my ($dir, $n, $limit, $stall, $class, $age, $qname, $lock, $title, $label, $rkey, $hold, $dscript, $dkey) = @ARGV;
+  # (the keeper closes fd 7, the GPU lane's lock, before it starts: `<(exec 7>&-; exec …)`, since bash 3.2 leaves the
+  # descriptor open for `<(exec perl … 7>&-)`, measured 2026-11-25)
+  exec 8< <(exec 7>&-; exec perl -MFcntl=:flock -MTime::HiRes=time,sleep -e '
+    my ($dir, $n, $limit, $stall, $class, $age, $qname, $lock, $title, $label, $rkey, $hold, $dscript, $dkey, $pool, $infop) = @ARGV;
+    my $orig = $class;  # (a promoted work waiter ranks as land but is still a work take for the one-work rule)
     # disk (disk_reserve.py admit): the head of the queue takes a slot only when the disk can hold its build next to
     # what the running takes will still grow; asked at most every 5 s while first (it reads df and the small files
     # of the trackers, no du), so a take that ends frees its reservation for the next one within seconds
@@ -197,34 +224,92 @@ heavy_slot_acquire() {
     # admission passes (2026-11-10: a head reserving 30.8 GiB of 25.5 free held 5 fitting waiters for 3 h); the head
     # keeps its place: it clears its marker as soon as the disk fits, and then nobody behind it may pass
     my $mark = sub { "$q/.disk-$me" };
+    # the keeper of a ticket: its pid alive and that process started no later than the ticket file was written (+2 s:
+    # ps gives whole seconds; the keeper writes its ticket once, after it starts, and a rename keeps the time); a later
+    # process that took the pid of a dead keeper is not it. Not the time in the name: a restarted waiter writes its old
+    # time into a new ticket. A ticket gone meanwhile, or a start ps cannot give, falls back to the pid alone
+    my $keeper = sub {
+      my ($p, $t) = @_;
+      my $stamp = (stat("$q/$t"))[9];
+      return 1 unless defined $stamp;
+      my $et = `ps -o etime= -p $p 2>/dev/null`; $et =~ s/\s+//g;
+      return 1 if $et eq "";
+      my $days = ($et =~ s/^(\d+)-//) ? $1 : 0;
+      my $secs = 0; $secs = $secs * 60 + $_ for split /:/, $et;
+      return time - ($secs + $days * 86400) <= $stamp + 2;
+    };
+    # one work take at a time on the heavy slots: true while a held slot (its lock held by its keeper, its info
+    # naming class `work`) is a work take; only a work waiter asks. The lock, not the pid: a killed holder that its
+    # parent has not reaped still answers kill 0, while its keeper (and the lock) is gone within a second
+    my @fh;  # (the lock file of each slot, opened below; declared here for $work_busy)
+    # (only while a slot is free: with every slot held the waiter waits as before, and marks nothing)
+    my $work_busy = sub {
+      return 0 unless defined $pool && $pool eq "heavy" && $orig eq "work";
+      my ($free, $work) = (0, 0);
+      for my $k (0 .. $n - 1) {
+        if (flock($fh[$k], LOCK_EX | LOCK_NB)) { flock($fh[$k], LOCK_UN); $free = 1; next }  # (nobody holds slot k)
+        # (a held slot whose info is not written yet, or names a holder that is gone, counts as work: two work
+        # takes asking at once would otherwise both take a slot before either wrote its info)
+        my @l;
+        if (open(my $i, "<", "$dir/$infop$k")) { @l = <$i>; close $i; chomp @l }
+        $work = 1 if @l < 5 || $l[0] !~ /^\d+$/ || !kill(0, $l[0]) || $l[4] eq "work";
+      }
+      return $free && $work;
+    };
+    my $wmark = sub { "$q/.work-$me" };
+    my ($wb, $wlast) = (0, 0);
     my $clear = sub { unlink $mark->() };
-    END { unlink $ticket if defined $ticket; unlink "$q/.disk-$me" if defined $me }
-    my @fh;
+    END { unlink $ticket if defined $ticket; if (defined $me) { unlink "$q/.disk-$me"; unlink "$q/.work-$me" } }
     for my $k (0 .. $n - 1) { open($fh[$k], ">>", "$dir/$lock$k") or do { print "error $!\n"; exit 2 } }
     print "pid $$\n";
     my $start = time; my $note = 0; my $best; my $moved = time;
     while (1) {
       my $want = $name->();
-      if ($want ne $me && rename($ticket, "$q/$want")) { $clear->(); $me = $want; $ticket = "$q/$me" }
+      if ($want ne $me && rename($ticket, "$q/$want")) { $clear->(); unlink $wmark->(); $me = $want; $ticket = "$q/$me" }
       opendir(my $dh, $q) or do { print "error $!\n"; exit 2 };
       my @live;
-      for my $t (sort grep { /^\d/ } readdir $dh) {
+      my @names = readdir $dh;
+      for my $t (sort grep { /^\d/ } @names) {
         my ($p) = $t =~ /-(\d+)$/;
-        if ($p && ($p == $$ || kill(0, $p))) { push @live, $t } else { unlink "$q/$t" }
+        if ($p && ($p == $$ || (kill(0, $p) && $keeper->($p, $t)))) { push @live, $t } else { unlink "$q/$t" }
+      }
+      # a `.disk-<ticket>` marker whose ticket is gone (its keeper was killed before its END ran) goes with it: it
+      # held nothing, but read as a waiter (2026-11-16: one from 11-15 02:26 shown as a 26 h wait)
+      my %held = map { $_ => 1 } @live, $me;
+      for my $mk (grep { /^\.(?:disk|work)-/ } @names) {
+        my ($t) = $mk =~ /^\.(?:disk|work)-(.+?)(?:\.tmp)?$/;
+        unlink "$q/$mk" if defined $t && !$held{$t};
       }
       closedir $dh;
       my ($place) = grep { $live[$_] eq $me } 0 .. $#live;
       # may ask for a slot: the head, or a waiter every one before which is held by the disk (a marker fresher than
       # 15 s; a copy of this block from before the markers writes none, so nobody passes it)
-      my $eligible = defined $place && ($place == 0 || ($dscript ne "" && !grep {
-        my $m = (stat("$q/.disk-$live[$_]"))[9]; !defined $m || time - $m > 15 } 0 .. $place - 1));
+      # (or, for a land waiter only, held by the one-work rule: a `.work-<ticket>` marker fresher than 15 s; work
+      # waiters keep their order among themselves)
+      my $eligible = defined $place && ($place == 0 || !grep {
+        my $md = (stat("$q/.disk-$live[$_]"))[9]; my $mw = (stat("$q/.work-$live[$_]"))[9];
+        !(($dscript ne "" && defined $md && time - $md <= 15) || ($orig ne "work" && defined $mw && time - $mw <= 15)) } 0 .. $place - 1);
+      # a work waiter behind waiters that are all held by the disk or the one-work rule may not pass them, but it is
+      # held by the same rule: it asks whether work is busy and marks itself so, never taking a slot (the work order
+      # is kept); without the marker the land waiters behind it could not pass (2026-11-24: two work waiters at the
+      # head held three land takes ~6 h with a slot free)
+      my $wonly = !$eligible && defined $place && $place > 0 && $orig eq "work" && !grep {
+        my $md = (stat("$q/.disk-$live[$_]"))[9]; my $mw = (stat("$q/.work-$live[$_]"))[9];
+        !(($dscript ne "" && defined $md && time - $md <= 15) || (defined $mw && time - $mw <= 15)) } 0 .. $place - 1;
       if (!$eligible && !$dok) { ($dok, $dlast) = (1, 0); $clear->() }  # (passed by: asks again when it may)
       if ($eligible && defined $dscript && $dscript ne "" && time - $dlast >= 5) {
         $dwhy = `python3 "$dscript" admit "$dir" "$dkey" 2>&1`; $dok = ($? == 0); $dlast = time; chomp $dwhy;
         if ($dok) { $clear->() } elsif (open(my $mf, ">", $mark->() . ".tmp")) { print $mf "$dwhy\n"; close $mf; rename $mark->() . ".tmp", $mark->() }
         $moved = time if !$dok;  # (waiting for disk is not a stalled queue: the head does not give up for it)
       }
-      if ($eligible && $dok) {
+      if (($eligible && $dok) || $wonly) {
+        $wb = $work_busy->();
+        if (!$wb) { unlink $wmark->() }
+        elsif (time - $wlast >= 5 && open(my $wf, ">", $wmark->() . ".tmp")) {
+          print $wf "one work take at a time\n"; close $wf; rename $wmark->() . ".tmp", $wmark->(); $wlast = time;
+        }
+      } else { $wb = 0; unlink $wmark->() }
+      if ($eligible && $dok && !$wb) {
         for my $k (0 .. $n - 1) {
           next unless flock($fh[$k], LOCK_EX | LOCK_NB);
           $clear->(); unlink $ticket; undef $ticket; unlink $res if $res ne "";
@@ -240,18 +325,20 @@ heavy_slot_acquire() {
       if ($w >= $limit) { unlink $res if $res ne ""; $clear->(); print "timeout\n"; exit 1 }
       if (time - $moved >= $stall) { unlink $res if $res ne ""; $clear->(); print "stalled\n"; exit 1 }
       if ($res ne "" && time - $touched >= 30) { utime(undef, undef, $res); $touched = time }
-      if ($w >= $note) { printf "wait %d %d %s%s\n", ($place // 0) + 1, $w, $class, $dok ? "" : " disk"; $note += 60 }
+      if ($w >= $note) { printf "wait %d %d %s%s%s\n", ($place // 0) + 1, $w, $class, $dok ? "" : " disk", $wb ? " worklimit" : ""; $note += 60 }
       sleep 0.2;
       exit 3 if getppid() != $parent;
     }
-  ' "$d" "$n" "$limit" "$stall" "$class" "$age" "$queue" "$lock" "$title" "$label" "$rkey" "$hold" "$dscript" "$dkey")
+  ' "$d" "$n" "$limit" "$stall" "$class" "$age" "$queue" "$lock" "$title" "$label" "$rkey" "$hold" "$dscript" "$dkey" "$pool" "$info")
   while IFS= read -r line <&8; do
     case "$line" in
       "pid "*) HEAVY_SLOT_KEEPER=${line#pid } ;;
       "wait "*)
         set -- $line
         case "$2" in 1) k=1st ;; 2) k=2nd ;; 3) k=3rd ;; *) k="$2th" ;; esac
-        if [ "${6:-${5:-}}" = disk ]; then
+        if [ "${@: -1}" = worklimit ]; then
+          echo "heavy slot: $k in the queue, waiting ($3 s): one work take at a time, held by $(heavy_slot_holders "$d")" >&2
+        elif [ "${6:-${5:-}}" = disk ]; then
           echo "heavy slot: $k in the queue, waiting for disk space ($3 s): $(python3 "$dscript" admit "$d" "$dkey" 2>&1)" >&2
         else
           echo "heavy slot: waiting ($k in the queue, $3 s) for $(heavy_slot_holders "$d"); ${pool} slot, as $4${5:+ $5}" >&2
@@ -264,7 +351,7 @@ heavy_slot_acquire() {
         printf '%s\n%s\n%s\n%s\n%s\n' "$$" "$(date +%s)" "$label" "$tool" "$class" > "$HEAVY_SLOT_INFO"
         # the take's reservation, kept by a tracker that samples its target dirs and records the peak when it ends
         if [ -n "$dscript" ]; then
-          nohup python3 "$dscript" track "$d" "$dkey" "$$" ${HEAVY_SLOT_DISK_ROOTS:-$PWD} </dev/null >/dev/null 2>&1 &
+          nohup python3 "$dscript" track "$d" "$dkey" "$$" ${HEAVY_SLOT_DISK_ROOTS:-$PWD} </dev/null >/dev/null 2>&1 7>&- &
         fi
         if [ "$pool" = light ]; then
           ALICE_HEAVY_SLOT_LIGHT_HELD=$$
@@ -582,6 +669,7 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
+#   - ci.yml:clippy-canary:Rust toolchain (rust-toolchain.toml) (no cargo / grep)
 #   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
 #   - ci.yml:scripts:Install gnome-keyring (with_keyring.sh tests) (no cargo / grep)
 #   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
@@ -661,6 +749,34 @@ step "ci.yml / clippy: Clippy (all features, all targets)"
   gh_step ci.yml.clippy
 relint
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic )
+)
+
+step "ci.yml / clippy-canary: Clippy canary data (generator tests)"
+(
+  gh_step ci.yml.clippy-canary
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_gen_clippy_canary_calls.py )
+)
+
+step "ci.yml / clippy-canary: Clippy canary data (generated from clippy.toml, no drift)"
+(
+  gh_step ci.yml.clippy-canary
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/gen_clippy_canary_calls.py --check )
+)
+
+step "ci.yml / clippy-canary: Clippy canary (tests)"
+(
+  gh_step ci.yml.clippy-canary
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/test_clippy_canary.py )
+)
+
+step "ci.yml / clippy-canary: Clippy canary (every planted banned call is flagged)"
+(
+  gh_step ci.yml.clippy-canary
+relint
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; python3 scripts/clippy_canary.py )
 )
 
 step "ci.yml / doc: run"
@@ -1030,6 +1146,7 @@ leg_not_run() {
     *) not_run "$1 [runs-on=$2] (an OS leg this host does not run)" ;;
   esac
 }
+not_run 'ci.yml:clippy-canary:Rust toolchain (rust-toolchain.toml) (no cargo / grep)'
 not_run 'security-audit.yml:tools-audit:Run cargo audit on the tool'"'"'s lock (continue-on-error, no count guard for cargo audit)'
 not_run 'security-audit.yml:coverage:Run coverage (needs network / runner-only)'
 not_run 'fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (runner-only (open-ended or unprovable-bounded fuzz run))'

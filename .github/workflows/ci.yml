@@ -56,6 +56,31 @@ jobs:
       - name: Clippy (all features, all targets)
         run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
 
+  # ALICE-Law G1: the lists in clippy.toml only gate anything if clippy flags a call to them. A
+  # throwaway crate with the same clippy.toml plants one banned call per row of
+  # scripts/clippy_canary_calls.tsv (0 rows fail); the rows are generated from clippy.toml, one per
+  # disallowed-methods / disallowed-types entry, and --check fails when the file has drifted
+  clippy-canary:
+    name: clippy canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: |
+          ch=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null)
+          [ -n "$ch" ] || { echo "rust-toolchain.toml has no channel: the default toolchain is not installed" >&2; exit 1; }
+          rustup toolchain install "$ch" --profile minimal --component clippy --no-self-update
+          rustup default "$ch"
+      - name: Clippy canary data (generator tests)
+        run: python3 scripts/test_gen_clippy_canary_calls.py
+      - name: Clippy canary data (generated from clippy.toml, no drift)
+        run: python3 scripts/gen_clippy_canary_calls.py --check
+      - name: Clippy canary (tests)
+        run: python3 scripts/test_clippy_canary.py
+      - name: Clippy canary (every planted banned call is flagged)
+        run: python3 scripts/clippy_canary.py
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
