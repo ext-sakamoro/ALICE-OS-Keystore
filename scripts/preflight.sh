@@ -702,6 +702,7 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 #   - ci.yml:clippy-canary:Rust toolchain (rust-toolchain.toml) (no cargo / grep)
 #   - ci.yml:test:Install gnome-keyring (Linux, a real Secret Service for the key store tests) (no cargo / grep)
 #   - ci.yml:scripts:Install gnome-keyring (with_keyring.sh tests) (no cargo / grep)
+#   - ci.yml:scripts:G11 self-check (ALICE-Law at the pinned revision) (no cargo / grep)
 #   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
 #   - security-audit.yml:audit:Install cargo-audit (a tool install, setup)
 #   - security-audit.yml:tools-audit:Install cargo-audit (continue-on-error, a tool install, setup)
@@ -875,6 +876,12 @@ step "ci.yml / scripts: Shared files equal ALICE-Law's table"
   python3 scripts/test_shared_files.py
   scripts/shared_files.sh
 )
+)
+
+step "ci.yml / scripts: G11 table matches the declared gates"
+(
+  gh_step ci.yml.scripts
+( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; scripts/g11_table.sh )
 )
 
 step "security-audit.yml / audit: Fetch dependencies (the guard reads the dependency tree offline)"
@@ -1177,6 +1184,7 @@ leg_not_run() {
   esac
 }
 not_run 'ci.yml:clippy-canary:Rust toolchain (rust-toolchain.toml) (no cargo / grep)'
+not_run 'ci.yml:scripts:G11 self-check (ALICE-Law at the pinned revision) (no cargo / grep)'
 not_run 'security-audit.yml:tools-audit:Run cargo audit on the tool'"'"'s lock (continue-on-error, no count guard for cargo audit)'
 not_run 'security-audit.yml:coverage:Run coverage (needs network / runner-only)'
 not_run 'fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_foreign_key_bytes] (runner-only (open-ended or unprovable-bounded fuzz run))'

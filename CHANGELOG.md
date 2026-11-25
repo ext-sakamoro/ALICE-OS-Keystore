@@ -14,6 +14,7 @@
 - `AsyncKeyOps` / `KeyOps` / `KeyOpsError` を `alice-crypto` から再公開
 - CI: workflow `web.yml` (wasm32 の clippy、headless Chrome / Firefox の wasm-bindgen 試験、Playwright の Chromium / Firefox / WebKit で reload の試験、各 lane は通った試験が 0 件か browser が欠けると fail)
 - CI と preflight: clippy.toml の禁止一覧が実際に効くことを確かめる job `clippy canary` を足した 一覧の項目ごとに禁止した呼び出しを 1 つ置いた使い捨ての crate を同じ clippy.toml で clippy にかけ、全項目が検出されない・一覧と行が食い違う・1 件も置かないと失敗 行は `scripts/gen_clippy_canary_calls.py` が clippy.toml から生成し (`--check` で食い違いを見る)、`scripts/clippy_canary.py` と試験は他の ALICE crate と同じ中身の共有 file `scripts/g11_table.sh` も同じ中身で持つ (ALICE-Law の表に載るのは次の表の再生成から)
+- CI と preflight: G11 の表を ALICE-Law の検査器で確かめる step (`G11 table matches the declared gates`) と、ALICE-Law を pin の revision で取り出して G11 の自己検査を走らせる step (`G11 self-check (ALICE-Law at the pinned revision)`) を足した 写しはすべて表の bytes (pending の行は移行先) なので、適合宣言の G11 を pass にした
 
 ### Security
 
