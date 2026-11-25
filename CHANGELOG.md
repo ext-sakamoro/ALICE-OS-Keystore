@@ -17,6 +17,7 @@
 
 ### Security
 
+- `secret-service` を 5.2 から 6.0.0 に、`zbus` を 5 から 6 に (Linux の Secret Service) zbus 5 が引いていた zvariant / zbus_names / zvariant_derive (RUSTSEC-2026-0370 / 0371 / 0372、unmaintained) が依存から消え、期限付きの保留 3 件を外した 店の接続は zbus 6 の非同期の builder を `zbus::block_on` で作る (呼び出しごとの時間の上限はそのまま)
 - `rustix` を 1.1.5 から 1.1.6 に (Cargo.lock / fuzz、RUSTSEC-2026-0486: xattr の関数が長さ 0 の buffer で書いていない byte を初期化済みにする、zbus / secret-service と uniffi の経路で入る) この crate は xattr の関数を呼ばないが、修正版があるので上げた
 
 ### Fixed

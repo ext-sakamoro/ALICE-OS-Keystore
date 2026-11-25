@@ -63,11 +63,11 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 # Linux Secret Service (gnome-keyring / KWallet over D-Bus), blocking API
 [target.'cfg(target_os = "linux")'.dependencies]
-secret-service = { version = "5.2", features = ["rt-async-io-crypto-rust"] }
+secret-service = { version = "6", default-features = false, features = ["rt-default", "crypto-rust"] }
 # the name of the store's lock file (the version secret-service already builds)
 sha2 = "0.11"
 # the store's own connection, with a timeout on every call (the version and features secret-service already builds)
-zbus = { version = "5", default-features = false, features = ["blocking-api"] }
+zbus = { version = "6", default-features = false, features = ["default-rt"] }
 
 # the macOS Keychain tests read and remove items behind the store's back
 [target.'cfg(target_os = "macos")'.dev-dependencies]

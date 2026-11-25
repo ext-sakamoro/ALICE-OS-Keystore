@@ -403,9 +403,12 @@ fn create_or_adopt(
 
 /// A connection to the session bus whose calls wait at most `timeout`, with an encrypted session
 fn connect(timeout: Duration) -> Result<SecretService<'static>, KeyProviderError> {
-    let conn = zbus::blocking::connection::Builder::session()
-        .and_then(|b| b.method_timeout(timeout).build())
-        .map_err(|_| KeyProviderError::Unavailable(UNREACHABLE))?;
+    let conn = zbus::block_on(
+        zbus::connection::Builder::session()
+            .method_timeout(timeout)
+            .build(),
+    )
+    .map_err(|_| KeyProviderError::Unavailable(UNREACHABLE))?;
     SecretService::connect_with_existing(EncryptionType::Dh, conn).map_err(|e| unavailable(&e))
 }
 

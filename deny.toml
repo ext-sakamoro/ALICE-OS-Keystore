@@ -29,9 +29,6 @@ yanked = "deny"
 ignore = [
     # unmaintained / transitive dep 由来の warning (informational only、CVE ではない)
     # 期限付きの保留 (scripts/advisory_holds.toml、scripts/advisory_hold_guard.py が版と依存元と期限を確かめる)
-    "RUSTSEC-2026-0370",  # zvariant 5.15.1 unmaintained (zbus 5.19 via secret-service 5.2、Linux)
-    "RUSTSEC-2026-0371",  # zbus_names 4.3.5 unmaintained (同上)
-    "RUSTSEC-2026-0372",  # zvariant_derive 5.15.1 unmaintained (同上)
 ]
 
 # ---------------------------------------------------------------------------
