@@ -7,19 +7,10 @@ name: Web
 
 on:
   push:
+    # ci/**: the same checks on a branch before it is fast-forwarded to main; no `paths` here
+    # (a ci/ branch created at a SHA another ref already has gets an empty diff and the run
+    # would be skipped): the changes job decides from .github/paths/web.txt instead
     branches: [main, 'ci/**']
-    paths:
-      - 'src/web.rs'
-      - 'src/web_page.rs'
-      - 'src/lib.rs'
-      - 'src/floor.rs'
-      - 'tests/web_webcrypto_store.rs'
-      - 'tests/web/**'
-      - 'scripts/web_test_count.py'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/web.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
@@ -33,7 +24,35 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
+  # which files changed: a new or force-pushed branch, or a later push to a branch main has not
+  # taken, is compared with merge-base(origin/main); a push to main with before..after; any error
+  # runs (fail-closed) — scripts/changed_paths.py
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after || github.sha }}
+          CREATED: ${{ github.event.created }}
+          FORCED: ${{ github.event.forced }}
+        run: >-
+          python3 scripts/changed_paths.py decide --event "$EVENT"
+          --before "$BEFORE" --after "$AFTER" --created "$CREATED" --forced "$FORCED"
+          --patterns-file .github/paths/web.txt
+
   browser:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: browser (wasm-bindgen Chrome / Firefox, Playwright Chromium / Firefox / WebKit)
     runs-on: ubuntu-24.04 # Playwright installs no Chromium on 26.04
     timeout-minutes: 40
@@ -73,3 +92,16 @@ jobs:
           for _ in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8123/index.html && curl -sf -o /dev/null http://localhost:8123/index.html && break; sleep 1; done
           (cd tests/web && npx playwright test --reporter=json > ../../web-report.json) || true
           python3 scripts/web_test_count.py --playwright web-report.json
+
+  gate:
+    name: Gate
+    if: always()
+    needs: [changes, browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/changed_paths.py gate --needs-json "$NEEDS"

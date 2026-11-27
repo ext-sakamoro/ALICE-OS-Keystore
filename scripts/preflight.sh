@@ -725,42 +725,17 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 #   - eol.yml:eol: uses actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 (an action this file cannot run)
 #   - public-text.yml:public-text: uses actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 (an action this file cannot run)
 #   - public-text.yml:public-text:Public text (tree at HEAD, then the pushed commits) (reads BEFORE, PR_BASE, a value only the runner has)
+#   - web.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, a value only the runner has)
 #   - web.yml:browser:Add the wasm32 target (no cargo / grep)
 #   - web.yml:browser:Build the page package (no cargo / grep)
 #   - web.yml:browser:Install Playwright and its browsers (no cargo / grep)
 #   - web.yml:browser:Playwright reload test (Chromium / Firefox / WebKit) and its count (needs network / runner-only)
+#   - web.yml:gate:gate (reads NEEDS, a value only the runner has)
 
 need cargo-audit "cargo install cargo-audit --locked"
 need cargo-deny "cargo install cargo-deny --locked"
 need cargo-machete "cargo install cargo-machete --locked"
 command -v python >/dev/null 2>&1 || python() { python3 "$@"; }
-preflight_paths() {
-  python3 -c '
-import json, re, subprocess, sys
-kind, pats = sys.argv[1], json.loads(sys.argv[2])
-def rx(p):
-    out, i = "", 0
-    while i < len(p):
-        if p.startswith("**", i): out, i = out + ".*", i + 2
-        elif p[i] == "*": out, i = out + "[^/]*", i + 1
-        elif p[i] == "?": out, i = out + "[^/]", i + 1
-        else: out, i = out + re.escape(p[i]), i + 1
-    return re.compile(out + "$")
-def hit(path, ps):
-    r = False
-    for p in ps:
-        if p.startswith("!"):
-            if rx(p[1:]).match(path): r = False
-        elif rx(p).match(path): r = True
-    return r
-b = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()
-if not b: sys.exit(0)
-files = set()
-for a in (["git", "diff", "--name-only", b, "HEAD"], ["git", "diff", "--name-only", "HEAD"]):
-    files |= set(subprocess.run(a, capture_output=True, text=True).stdout.split())
-sys.exit(0 if (any(hit(f, pats) for f in files) if kind == "paths" else any(not hit(f, pats) for f in files)) else 1)
-' "$1" "$2"
-}
 
 step "ci.yml / fmt: run"
 (
@@ -1096,7 +1071,6 @@ step "public-text.yml / public-text: Tests of scripts/public_text.sh (no network
 ( python scripts/test_public_text.py )
 )
 
-if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "src/floor.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
 step "web.yml / browser: Clippy (wasm32, web-page, all targets)"
 (
   gh_step web.yml.browser
@@ -1104,11 +1078,7 @@ relint
 grep -q '^wasm32-unknown-unknown$' <<<"$(rustup target list --installed)" || rustup target add wasm32-unknown-unknown
 ( export CARGO_TERM_COLOR="always" RUSTFLAGS="-Dwarnings"; cargo clippy --target wasm32-unknown-unknown --features web-page --all-targets -- -D warnings -W clippy::pedantic )
 )
-else
-  echo 'PREFLIGHT-SKIP: web.yml / browser: Clippy (wasm32, web-page, all targets): the change touches none of its push paths' >&2
-fi
 
-if preflight_paths paths '["src/web.rs", "src/web_page.rs", "src/lib.rs", "src/floor.rs", "tests/web_webcrypto_store.rs", "tests/web/**", "scripts/web_test_count.py", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".github/workflows/web.yml"]'; then
 step "web.yml / browser: wasm-bindgen tests (headless Chrome and Firefox) and their count"
 (
   gh_step web.yml.browser
@@ -1120,9 +1090,6 @@ step "web.yml / browser: wasm-bindgen tests (headless Chrome and Firefox) and th
   python3 scripts/web_test_count.py --wasm chrome.log firefox.log
 )
 )
-else
-  echo 'PREFLIGHT-SKIP: web.yml / browser: wasm-bindgen tests (headless Chrome and Firefox) and their count: the change touches none of its push paths' >&2
-fi
 
 if [[ $quick -eq 1 ]]; then
   echo; echo "preflight --quick OK (test / bench suites skipped)"; exit 0
